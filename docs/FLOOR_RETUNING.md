@@ -120,7 +120,7 @@ Run `tests/host/run_straight_heading_tests.cmd` on Windows with the installed
 Visual Studio 2017 C compiler. The small `no_sdk` test runtime allows this
 test to execute without Windows SDK/UCRT headers. It links the production
 straight controller to simulated hardware and checks both return correction
-signs, heading carry through sensor re-zeroing, 80 ms brake timing and samples,
+signs, heading carry through sensor re-zeroing, 150 ms brake timing and samples,
 idle sampling, timer wrap, explicit resets, STOP, invalid references, preparation
 failure, and the existing IR regression cases. It does not validate physical
 steering response, gyro bias or floor accuracy.

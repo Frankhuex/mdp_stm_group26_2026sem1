@@ -59,7 +59,7 @@ Steering may still be moving when drive starts; this is not continuous motion bl
 - 右转角度绝对值小于 90°（前进／倒车均适用），以及其他不大于 15° 的转弯：起步最多 60 ms 或已转 2°，
   先达到者结束起步。其他转弯起步最多 120 ms。停车判断始终优先。
 - 正常指令转弯制动保持 `TURN_BRAKE_HOLD_MS=150`，期间持续积分陀螺仪；
-  之后释放并使舵机回中。其他共享 `RobotHW_MotorStop()` 调用保持 80 ms。
+  之后释放并使舵机回中。其他共享 `RobotHW_MotorStop()` 调用保持 150 ms。
 - 双高制动使用 `CCR=ARR+1`（当前 TIM4／TIM9 的 ARR=7199），输出持续高电平。
   延长保持时间避免过早释放，不表示瞬时制动力同比增大。
 - 小角度右转提前量 `TURN_RIGHT_SHORT_LEAD_TIME_S=0.17`，普通右转 0.17、左转 0.22。
@@ -67,7 +67,7 @@ Steering may still be moving when drive starts; this is not continuous motion bl
   每次调整后实测。`TURN_*_STOP_RATIO` 只用于旧的最小半径标定流程。
 
 Normal command turns use non-blocking 150 ms braking; other shared blocking stop
-calls hold for 80 ms. Stop prediction remains active even during kickstart.
+calls hold for 150 ms. Stop prediction remains active even during kickstart.
 Test 15/30/45/60/90/180 degrees under the actual load after speed changes.
 
 ## 验证 / Verification

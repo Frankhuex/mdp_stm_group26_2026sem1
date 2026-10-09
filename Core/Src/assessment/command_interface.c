@@ -101,9 +101,9 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_left1_commands[] =
 {
-    "LATERAL,LEFT,20",
+    "LATERAL,LEFT,25",
     "STRAIGHT,RIGHTIR,GT,50",
-    "LATERAL,RIGHT,20",
+    "LATERAL,RIGHT,25",
     "STRAIGHT,UNTILUS,35",
 
     // "TURN,LEFT,R=35,A=60",
@@ -128,9 +128,9 @@ static const char *const fast_left2_commands[] =
 };
 static const char *const fast_right1_commands[] =
 {
-    "LATERAL,RIGHT,20",
+    "LATERAL,RIGHT,25",
     "STRAIGHT,LEFTIR,GT,50",
-    "LATERAL,LEFT,20",
+    "LATERAL,LEFT,25",
     "STRAIGHT,UNTILUS,35",
 
     // "TURN,RIGHT,R=35,A=60",
@@ -436,15 +436,20 @@ static void NotifyPendingMotionDone(void)
         uint32_t mm, age;
         char mm_text[12];
         int valid;
+        int8_t direction = 0;
         if (!StraightStateIsTerminal(state)) return;
         if (pending_motion_done_suppressed) { ClearPendingMotion(); return; }
         Straight_UltrasonicStatus(&threshold, &mm, &valid, &age);
+        uint8_t captured = Straight_UltrasonicStopReading(&mm, &age, &direction);
+        if (captured) valid = 0;
         FormatUltrasonicMm(mm_text, sizeof(mm_text), mm);
         snprintf(msg, sizeof(msg),
-                 "DONE,STRAIGHT,mode=UNTILUS,state=%s,reason=%s,threshold_cm=%ld,us_mm=%s,us_status=%d\r\n",
+                 "DONE,STRAIGHT,mode=UNTILUS,state=%s,reason=%s,threshold_cm=%ld,us_mm=%s,us_status=%d,dir=%s,us_age_ms=%lu\r\n",
                  StraightStateText(state),
                  state == STRAIGHT_DONE ? "US_THRESHOLD" : StraightStateText(state),
-                 (long)threshold, mm_text, valid);
+                 (long)threshold, mm_text, valid,
+                 captured ? (direction > 0 ? "FORWARD" : direction < 0 ? "REVERSE" : "NONE") : "UNKNOWN",
+                 (unsigned long)age);
         Cmd_Send(msg);
         ClearPendingMotion();
     }
@@ -1037,7 +1042,7 @@ static void DispatchLine(char *line)
         /* Static front-ultrasonic read, NO motion. One measurement; replies
          * US,mm=<sensor-to-object mm>,status=<rc>. mm=0 means no echo / out of
          * range (nothing in front) - the Pi uses that to skip the re-approach.
-         * mm is sensor->object; nose->face = mm/10 - ~8cm sensor set-back. */
+         * mm is sensor->object, also used directly by UNTILUS. */
         uint32_t pulse_us = 0U, dist_mm = 0U;
         int rc;
         if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
@@ -1228,10 +1233,9 @@ static void DispatchLine(char *line)
                 Cmd_Reject("ERR,BUSY");
                 return;
             }
-            /* User threshold is bumper/object clearance.  The ultrasonic
-             * sensor sits about 8 cm behind the bumper, so the controller
-             * threshold uses sensor/object clearance. */
-            rc = Straight_StartUntilUltrasonicCm(cm + 8);
+            /* Compare directly with the sensor distance reported by US,GET,
+             * in either direction; no installation offset is added. */
+            rc = Straight_StartUntilUltrasonicCm(cm);
             if (rc == 0)
             {
                 char msg[80];

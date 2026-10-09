@@ -27,7 +27,8 @@ int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us);
 /* 0 = normal gyro steering, otherwise the last accepted fixed pulse. */
 uint32_t Straight_FixedSteeringUs(void);
 /* Fresh confirmed distance selects forward (>target) or reverse (<target).
- * Stops after confirmed strict crossing; initial equality completes stationary.
+ * Stops at a direction-specific lead before the target; initial readings within
+ * arrival tolerance complete stationary.
  * Missing initial measurements fail without driving. */
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm);
 typedef enum { STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT } straight_ir_comparison_t;
@@ -50,6 +51,11 @@ extern uint32_t Straight_RightIRStopCmX10;
  * Nonzero status means invalid/stale; missing echoes do not stop motion. */
 int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,
                               int *status, uint32_t *age_ms);
+/* Successful UNTILUS condition sample, captured before braking. Historical
+ * age at detection; direction +1=forward, -1=reverse, 0=stationary equality.
+ * Returns 0 if no successful UNTILUS result is available. */
+uint8_t Straight_UltrasonicStopReading(uint32_t *distance_mm, uint32_t *age_ms,
+                                       int8_t *direction);
 void Straight_Step(void);
 void Straight_Stop(void);
 straight_state_t Straight_State(void);

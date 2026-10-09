@@ -53,6 +53,9 @@ static uint8_t sc_us_moving;
 static int32_t sc_us_threshold_cm;
 static ultrasonic_sample_t sc_us_sample;
 static uint32_t sc_us_sequence;
+static uint8_t sc_us_stop_reading_valid;
+static uint32_t sc_us_stop_mm, sc_us_stop_age_ms;
+static int8_t sc_us_stop_direction;
 
 static int32_t sc_target_cm_signed = 0;
 static uint32_t sc_start_tick = 0U;
@@ -73,6 +76,8 @@ static float sc_speed_error_filt = 0.0f;
 static uint8_t sc_us_approach_mode = 0U;
 static uint32_t sc_us_base_pwm = 0U;
 static uint8_t sc_us_kick_complete = 0U;
+static uint8_t sc_us_near_start;
+static uint32_t sc_us_stop_lead_mm;
 static uint8_t sc_us_start_confirm_count = 0U;
 static uint8_t sc_us_stop_confirm_count = 0U;
 static uint8_t sc_us_fail_count = 0U;
@@ -330,6 +335,7 @@ static uint16_t ComputeSteeringUs(float dt_sec)
 
 void Straight_Init(void)
 {
+    sc_us_stop_reading_valid = 0U;
     Straight_LeftIRStopCmX10 = UINT32_MAX;
     Straight_RightIRStopCmX10 = UINT32_MAX;
     sc_fixed_steer_us = 0U;
@@ -458,6 +464,9 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     RobotHW_EncoderReset();
     sc_prev_enc = RobotHW_EncoderSnapshotRead();
 
+    /* Distance allowance for normal GOCM only; calibration and IR retain
+     * their existing targets. UNTILUS has its own start/control path. */
+    const float brake_delay_cm = (!ir_mode && !fixed_steer_us) ? GOCM_BRAKE_DELAY_CM : 0.0f;
     if (sc_profile == STRAIGHT_PROFILE_SHORT)
     {
         const float overshoot_comp_cm = (sc_dir < 0)
@@ -466,7 +475,8 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
         float compensated_target_cm =
             (float)abs_cm
             + SHORT_CALIBRATION_OFFSET_CM
-            - overshoot_comp_cm;
+            - overshoot_comp_cm
+            + brake_delay_cm;
 
         if (compensated_target_cm <= 0.0f) return -2;
         target_revolutions = compensated_target_cm / WHEEL_CIRCUMFERENCE_CM;
@@ -478,7 +488,8 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
             : LONG_FORWARD_REV_ERROR_COMPENSATION;
         target_revolutions =
             ((float)abs_cm / WHEEL_CIRCUMFERENCE_CM)
-            - compensation_rev;
+            - compensation_rev
+            + brake_delay_cm / WHEEL_CIRCUMFERENCE_CM;
 
         if (target_revolutions <= 0.0f) return -2;
     }
@@ -579,6 +590,7 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
     sc_ir_mode = 0U;
     sc_us_moving = 0U;
     sc_us_threshold_cm = threshold_cm;
+    sc_us_stop_reading_valid = 0U;
     sc_dir = 1;
     sc_fixed_steer_us = 0U;
     sc_target_cm_signed = 0;
@@ -615,6 +627,14 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
 
 static void FinishUltrasonic(straight_state_t state)
 {
+    /* Preserve the condition sample before braking/foreground work ages it. */
+    if (state == STRAIGHT_DONE)
+    {
+        sc_us_stop_mm = sc_us_sample.distance_mm;
+        sc_us_stop_age_ms = HAL_GetTick() - sc_us_sample.timestamp_ms;
+        sc_us_stop_direction = sc_us_moving ? sc_dir : 0;
+        sc_us_stop_reading_valid = 1U;
+    }
     UltrasonicSensor_Cancel();
     FinishIR(state);
 }
@@ -644,7 +664,15 @@ static void StartUltrasonicDrive(uint32_t now)
     sc_speed_error_filt = 0.0f;
     sc_gyro_fail_count = 0U;
     sc_drive_start_tick = now;
-    sc_us_base_pwm = US_KICKSTART_PWM;
+    uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
+    uint32_t gap = sc_us_sample.distance_mm > target_mm
+                 ? sc_us_sample.distance_mm - target_mm : target_mm - sc_us_sample.distance_mm;
+    sc_us_near_start = gap <= US_SLOW_MARGIN_MM;
+    sc_us_approach_mode = sc_us_near_start;
+    uint32_t configured_lead = sc_dir > 0 ? US_FORWARD_STOP_LEAD_MM : US_REVERSE_STOP_LEAD_MM;
+    /* Small corrections retain travel toward the target before braking. */
+    sc_us_stop_lead_mm = configured_lead < gap / 2U ? configured_lead : gap / 2U;
+    sc_us_base_pwm = sc_us_near_start ? US_APPROACH_PWM : US_KICKSTART_PWM;
     sc_us_kick_complete = 0U;
     sc_us_start_confirm_count = 0U;
     sc_us_stop_confirm_count = 0U;
@@ -652,7 +680,7 @@ static void StartUltrasonicDrive(uint32_t now)
     sc_last_step_tick = now;
     sc_prev_enc = RobotHW_EncoderSnapshotRead();
     RobotHW_ServoSetUs(ComputeSteeringUs(0.0f));
-    Command_MotorSet(sc_dir, US_KICKSTART_PWM, US_KICKSTART_PWM);
+    Command_MotorSet(sc_dir, sc_us_base_pwm, sc_us_base_pwm);
 }
 
 static void StepUltrasonic(void)
@@ -674,9 +702,11 @@ static void StepUltrasonic(void)
             sc_us_fail_count = 0U;
             if (!sc_us_moving)
             {
-                /* Confirm the starting side; equality completes without driving. */
-                int8_t direction = sample.distance_mm > target_mm ? 1 :
-                                   sample.distance_mm < target_mm ? -1 : 0;
+                uint32_t error_mm = sample.distance_mm > target_mm
+                                  ? sample.distance_mm - target_mm : target_mm - sample.distance_mm;
+                /* Confirm arrival tolerance before selecting a direction. */
+                int8_t direction = error_mm <= US_ARRIVAL_TOLERANCE_MM ? 0 :
+                                   sample.distance_mm > target_mm ? 1 : -1;
                 if (sc_dir != direction) sc_us_start_confirm_count = 0U;
                 sc_dir = direction;
                 if (sc_us_start_confirm_count < UINT8_MAX) sc_us_start_confirm_count++;
@@ -688,9 +718,10 @@ static void StepUltrasonic(void)
             }
             else
             {
-                /* Lock direction for the command; stop only after strict crossing. */
-                uint8_t crossed = sc_dir > 0 ? sample.distance_mm < target_mm :
-                                              sample.distance_mm > target_mm;
+                /* Trigger before the target to allow for observed stopping travel. */
+                uint8_t crossed = sc_dir > 0
+                    ? sample.distance_mm <= target_mm + sc_us_stop_lead_mm
+                    : sample.distance_mm >= target_mm - sc_us_stop_lead_mm;
                 if (!crossed) sc_us_stop_confirm_count = 0U;
                 else if (sc_us_stop_confirm_count < UINT8_MAX) sc_us_stop_confirm_count++;
                 if (sc_us_stop_confirm_count >= US_STOP_CONFIRM_SAMPLES)
@@ -711,6 +742,16 @@ static void StepUltrasonic(void)
      * busy/cooldown.  A real trigger-driver failure is still fatal. */
     if (UltrasonicSensor_Trigger() == -1)
         FinishUltrasonic(STRAIGHT_SENSOR_ERROR);
+}
+
+uint8_t Straight_UltrasonicStopReading(uint32_t *distance_mm, uint32_t *age_ms,
+                                       int8_t *direction)
+{
+    if (!sc_until_us || sc_state != STRAIGHT_DONE || !sc_us_stop_reading_valid) return 0U;
+    if (distance_mm) *distance_mm = sc_us_stop_mm;
+    if (age_ms) *age_ms = sc_us_stop_age_ms;
+    if (direction) *direction = sc_us_stop_direction;
+    return 1U;
 }
 
 int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,
@@ -853,7 +894,7 @@ static void Straight_StepInternal(void)
 
     if (sc_braking)
     {
-        /* Keep the original 80 ms electrical brake and steering timing, but
+        /* Keep the configured 150 ms electrical brake and steering timing, but
          * continue measuring yaw/encoders so the return includes braking yaw. */
         if (brake_done)
         {
@@ -939,7 +980,7 @@ static void Straight_StepInternal(void)
              sc_total_right_counts >= US_KICKSTART_MIN_COUNTS) ? 1U : 0U;
 
         if (!sc_us_kick_complete &&
-            drive_ms >= US_KICKSTART_MIN_MS && both_wheels_started)
+            drive_ms >= (sc_us_near_start ? 0U : US_KICKSTART_MIN_MS) && both_wheels_started)
         {
             sc_us_kick_complete = 1U;
             /* Start normal synchronization with the measured path mismatch,
@@ -960,15 +1001,17 @@ static void Straight_StepInternal(void)
 
         if (!sc_us_kick_complete)
         {
-            sc_us_base_pwm = US_KICKSTART_PWM;
-            base_pwm = US_KICKSTART_PWM;
+            sc_us_base_pwm = sc_us_near_start ? US_APPROACH_PWM : US_KICKSTART_PWM;
+            base_pwm = sc_us_base_pwm;
             force_equal_kick = 1U;
         }
         else
         {
             target_pwm = sc_us_approach_mode
                        ? US_APPROACH_PWM : US_CRUISE_PWM;
-            sc_us_base_pwm = SlewPwm(sc_us_base_pwm, target_pwm, dt_sec);
+            /* Reduce promptly on approach; retain slew limiting for acceleration. */
+            sc_us_base_pwm = sc_us_approach_mode && sc_us_base_pwm > target_pwm
+                           ? target_pwm : SlewPwm(sc_us_base_pwm, target_pwm, dt_sec);
             base_pwm = sc_us_base_pwm;
         }
     }

@@ -55,9 +55,9 @@ DONE,STRAIGHT,state=<S>,target_cm=<cm>
 
 - `cm` is a signed integer with magnitude 10..200; positive drives forward, negative backward.
 - Magnitude 10..20 selects SHORT; 21..200 selects LONG.
-- SHORT: PWM 3200 for the first 100 ms, then a progress-based 2950→2980→2350 curve; target distance compensation is −4 cm forward, −3 cm reverse.
-- LONG: PWM 3300, reduced to 2400 once either wheel has accumulated 0.8 revolutions; target revolutions are reduced by 0.310 forward or 0.260 reverse. These PWM values are before global scaling. Slowdown depends on distance already traveled, not remaining distance.
-- Both profiles share yaw/rate-to-servo PID and wheel encoder-delta synchronization; both wheels must reach their compensated targets, then complete an 80 ms brake pulse. Yaw/encoder samples include braking.
+- SHORT: PWM 3200 for the first 100 ms, then a progress-based 2950→2980→2350 curve; normal GOCM adds a 2 cm later-braking allowance, giving net target compensation −2 cm forward and −1 cm reverse. CAL retains its previous compensation.
+- LONG: PWM 3300, reduced to 2400 once either wheel has accumulated 0.8 revolutions; base target revolutions are reduced by 0.310 forward or 0.260 reverse; normal GOCM then adds 2/20.4 revolutions (2 cm), giving net deductions about 0.212 forward and 0.162 reverse. These PWM values are before global scaling. Slowdown depends on distance already traveled, not remaining distance.
+- Both profiles share yaw/rate-to-servo PID and wheel encoder-delta synchronization; both wheels must reach their compensated targets, then complete a 150 ms brake pulse. Yaw/encoder samples include braking.
 - Straights and turns track planned/estimated heading. With heading ON, straight-to-straight moves retain error and incoming turn error adjusts nominal local rotation by at most 5 degrees (half the angle for very small turns), before side calibration. Reverse arc turns invert yaw direction. Successful turns now reset the reference as part of the post-turn actions in section 4; LEFT also switches heading OFF. Sensor preparation alone does not erase route error.
 - Manual motor/steering commands, STOP, encoder/yaw resets and gyro reconfiguration reset the route origin. Historical gaps or isolated read failures flag degraded confidence without rejecting a move; persistent live sensor failures still fault. Holding heading does not correct sideways displacement.
 - `HEADING,STATUS` returns `HEADING,enabled=<0|1>,target=<deg>,measured=<deg>,error=<deg>,tracking=<0|1>,degraded=<0|1>`. Positive is left. While stopped, `HEADING,RESET` resets the origin; `HEADING,ON`/`HEADING,OFF` changes mode and resets the origin. OFF is the startup default for normal UART and hardcoded runs. OFF retains local PID and reports cumulative heading for comparison, but does not carry correction between commands. Gyro-based turn stopping remains active. Explicit HEADING,ON or the dedicated A/B diagnostic can still opt into carry. See [test guide](MOTION_SEQUENCE_TESTS.md).
@@ -101,28 +101,30 @@ STRAIGHT,UNTILUS,<cm>
 OK,mode=UNTILUS,threshold_cm=<cm>
 ```
 
-`cm` is an integer bumper/object clearance. The UART parser adds 8 cm before calling the controller: the internal sensor/object target is `cm + 8`. The controller accepts internal thresholds 5..200 cm, so the current parser accepts inputs −3..192 cm. `OK` echoes the input; completion and status report the internal threshold. For input 20, compare ultrasound against 280 mm and expect `threshold_cm=28` in completion/status.
+`cm` is a positive integer from 5 to 200 specifying sensor-to-object distance, in the same reference as `US,GET`. No installation offset is added in either direction. `OK`, completion and status all report the requested threshold. For input 35, compare ultrasound directly against 350 mm and expect `threshold_cm=35` throughout.
 
-- Wait stationary for two consecutive fresh valid readings on the same side of the internal target. Above it selects forward; below it selects reverse. Two initial readings exactly equal to the target complete without driving. A side change resets startup confirmation.
-- After starting, lock direction: forward stops after two consecutive valid readings strictly below the target; reverse stops after two strictly above it. Equality during motion continues. A nonqualifying or invalid reading resets stop confirmation.
+- Wait stationary for two consecutive fresh valid readings on the same side of the internal target. Above it selects forward; below it selects reverse. Two initial readings within ±1 cm of the target complete without driving. A side change resets startup confirmation.
+- After starting, lock direction and use an early-brake threshold. Forward triggers at target + lead, reverse at target − lead, after two consecutive qualifying valid readings. Configured lead is 5 cm independently for each direction, capped at half the initial target error for small corrections. A nonqualifying or invalid reading resets confirmation.
 - Three consecutive invalid/zero/stale startup samples finish with SENSOR_ERROR without driving. A trigger-driver failure also faults. During motion, missing echoes do not confirm a crossing; sampling continues subject to STOP, timeout and travel limits.
 - PB15=TRIG, PC8=ECHO through a 5V-to-3.3V divider; TIM8_CH3 captures both edges at 1 MHz. Triggers are at least 60 ms apart; measurements time out after 60 ms. Valid samples must be no older than 200 ms.
-- Base PWM: kickstart 4000, cruise 3500, approach 2600. Both directions slow within 25 cm of the internal target, with 5 cm speed hysteresis and existing wheel synchronization. These are configured values before global PWM scaling.
+- Base PWM: distant-start kick 4000, cruise 3500, approach 2600. Starts within 25 cm use approach PWM 2600 instead of 4000 and end kick mode as soon as both wheels move. Approach reduction is immediate; acceleration remains slew-limited. Both directions slow within 25 cm of the internal target, with 5 cm speed hysteresis and existing wheel synchronization. These are configured values before global PWM scaling.
 - Total runtime is limited to 30 seconds; either wheel reaching 200 cm encoder travel stops motion. GOCM travel compensation is not used. Normal completion applies braking and steering centring; final physical clearance may differ from the triggering reading.
 
 Completion/failure event, in field order:
 
 ```text
-DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-or-INF>,us_status=<int>
+DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-or-INF>,us_status=<int>,dir=<FORWARD|REVERSE|NONE|UNKNOWN>,us_age_ms=<uint>
 ```
 
 | `state` | `reason` | Meaning |
 |---|---|---|
-| `DONE` | `US_THRESHOLD` | Confirmed directional crossing, or confirmed initial equality |
+| `DONE` | `US_THRESHOLD` | Confirmed early-brake threshold, or initial arrival tolerance |
 | `ABORTED` | `ABORTED` | User sent a stop command |
 | `SENSOR_ERROR` | `SENSOR_ERROR` | Trigger-driver failure or persistent invalid initial measurements |
 | `TIMEOUT` | `TIMEOUT` | Total runtime limit reached |
 | `DISTANCE_LIMIT` | `DISTANCE_LIMIT` | Encoder travel limit reached |
+
+On successful completion, `us_mm` and `us_status=0` report the saved condition-triggering sample before braking. They are preserved even if the DONE transmission is delayed beyond 200 ms. `dir` reports FORWARD or REVERSE, or NONE for stationary arrival tolerance; `us_age_ms` is the sample age at detection. Failure/abort use current sample validity/age and `dir=UNKNOWN`. These fields describe the triggering measurement, not a new measurement after stopping. Live `STRAIGHT,STATUS` still reports stale samples as INF/-1.
 
 UNTILUS status replaces the GOCM status format:
 
@@ -144,7 +146,7 @@ OK,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,threshold_cm=<int>
 DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<decimal-or-FAR>
 ```
 
-- Forward only; stop when the selected side's distance is **strictly greater** than the target. Equality continues. No ultrasonic bumper offset is added.
+- Forward only; stop when the selected side's distance is **strictly greater** than the target. Equality continues. No distance offset is added.
 - Integer thresholds: LEFTIR 10..50 cm, RIGHTIR 10..60 cm, matching the current calibration tables.
 - FAR, ADC acquisition failure and conversion error count as infinity and complete normally with `state=DONE,ir_cm=FAR`. They do not raise an IR sensor fault.
 - Read before applying drive power; an already-satisfied condition completes without driving. While moving, sample approximately every 40 ms; one qualifying sample is sufficient.
@@ -340,17 +342,17 @@ Illustrative values, not hardware measurements. `>` denotes transmitted lines an
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STRAIGHT,STATUS
-< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=28,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
-< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=28,us_mm=197,us_status=0
+< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=20,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
+< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=20,us_mm=197,us_status=0,dir=FORWARD,us_age_ms=0
 
-> STRAIGHT,UNTILUS,193
+> STRAIGHT,UNTILUS,4
 < ERR,BAD_VALUE
 
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STOP
 < OK
-< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=28,us_mm=INF,us_status=-1
+< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=20,us_mm=INF,us_status=-1,dir=UNKNOWN,us_age_ms=0
 ```
 
 The final example aborts before the first valid sample. RPi clients should parse mode and terminal state by field name and distinguish UNTILUS clearance from the GOCM travel target.

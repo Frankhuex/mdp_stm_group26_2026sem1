@@ -55,9 +55,9 @@ DONE,STRAIGHT,state=<S>,target_cm=<cm>
 
 - `cm` 为有符号整数，绝对值 10～200；正值前进、负值倒车。
 - 绝对值 10～20 使用 SHORT，21～200 使用 LONG。
-- SHORT：前 100 ms 使用 PWM 3200，随后按进度使用 2950→2980→2350 曲线，目标距离补偿为前进 −4 cm、倒车 −3 cm。
-- LONG：PWM 3300，任一轮累计达到 0.8 圈后降至 2400；目标圈数减去前进 0.310 圈、倒车 0.260 圈。以上 PWM 尚未乘全局比例。减速点按已走圈数判断，不是剩余距离。
-- 共用 yaw/角速度→舵机 PID 和左右轮编码器增量同步；左右轮均达到补偿目标后完成 80 ms 刹车，期间继续采样 yaw 和编码器。
+- SHORT：前 100 ms 使用 PWM 3200，随后按进度使用 2950→2980→2350 曲线，普通 GOCM 增加 2 cm 延后刹车行程，目标净补偿为前进 −2 cm、倒车 −1 cm；CAL 保留原补偿。
+- LONG：PWM 3300，任一轮累计达到 0.8 圈后降至 2400；基础目标圈数减去前进 0.310 圈、倒车 0.260 圈，普通 GOCM 再加 2/20.4 圈（2 cm），净扣减约为前进 0.212 圈、倒车 0.162 圈。以上 PWM 尚未乘全局比例。减速点按已走圈数判断，不是剩余距离。
+- 共用 yaw/角速度→舵机 PID 和左右轮编码器增量同步；左右轮均达到补偿目标后完成 150 ms 刹车，期间继续采样 yaw 和编码器。
 - 自动直行与转弯共享计划航向和陀螺仪估计航向。前进、倒车保持计划车身航向；转弯按请求角度更新计划航向，先根据进入转弯时的误差修正局部角度（最多 5 度，小转角最多一半），再应用已有左右转弯校准系数。倒车转弯的航向变化符号相反。制动和停车等待期间继续跟踪航向，传感器局部清零不会删除路线误差。
 - 手动电机/舵机、STOP、编码器/yaw 重置及陀螺仪重新配置会重置路线基准。历史采样间断或单次读取失败仅标记可信度降低，不会因此拒绝下一条指令；持续的实时传感器故障仍报错停止。航向修正不能消除横向位置偏差。
 - `HEADING,STATUS` 返回 `HEADING,enabled=<0|1>,target=<deg>,measured=<deg>,error=<deg>,tracking=<0|1>,degraded=<0|1>`，正角度为左转。停车时可用 `HEADING,RESET` 重设基准，或 `HEADING,ON` / `HEADING,OFF` 切换模式并重设基准。默认 ON；OFF 保留每段局部 PID，仍报告累计航向，但不跨段继承修正。测试方法见 [MOTION_SEQUENCE_TESTS.md](MOTION_SEQUENCE_TESTS.md)。
@@ -77,28 +77,30 @@ STRAIGHT,UNTILUS,<cm>
 OK,mode=UNTILUS,threshold_cm=<cm>
 ```
 
-`cm` 为保险杠到障碍物距离的整数阈值。串口解析器先加 8 cm 安装偏移，再调用控制器，因此内部探头到障碍物的目标为 `cm + 8`。控制器接受内部阈值 5～200 cm，当前解析器实际接受输入 −3～192 cm。`OK` 回显输入值，完成事件和状态查询回报内部阈值。例如输入 20，实际比较目标为 280 mm，完成／查询中的 `threshold_cm=28`。
+`cm` 为 5～200 的正整数，表示探头到障碍物的距离，与 `US,GET` 使用相同参考。前进与倒车均直接比较输入目标，不添加安装偏移。`OK`、完成事件和状态查询均回报输入阈值。例如输入 35，实际比较 350 mm，各回报均为 `threshold_cm=35`。
 
-- 起步前保持停车，等待连续两次有效、新鲜且位于内部目标同一侧的读数。大于目标则前进，小于目标则倒车；起始连续两次恰好等于目标时直接完成。读数从目标一侧跳到另一侧会重新计数。
-- 起步后固定方向：前进时连续两次读数严格小于目标后停车；倒车时连续两次严格大于目标后停车。运动中等于目标继续；不满足条件或无效读数会清零停止确认计数。
+- 起步前保持停车，等待连续两次有效、新鲜且位于内部目标同一侧的读数。大于目标则前进，小于目标则倒车；起始连续两次落在目标 ±1 cm 内时直接完成。读数从目标一侧跳到另一侧会重新计数。
+- 起步后固定方向并提前刹车：前进在读数不大于目标 + 提前量时、倒车在读数不小于目标 − 提前量时，连续确认两次后制动。前后方向分别配置 5 cm 提前量；小距离修正时最多取初始距离误差的一半。不满足条件或无效读数会清零确认计数。
 - 起始连续三次无效、零值或过期样本时，保持停车并以 SENSOR_ERROR 结束；触发驱动失败也会报错。行驶期间无回波不会确认越过目标，继续测量，STOP、超时和行程限制仍有效。
 - PB15=TRIG，PC8=ECHO 经 5V→3.3V 分压；TIM8_CH3 在 1 MHz 下双边沿捕获。触发间隔至少 60 ms，测量超时 60 ms，有效样本年龄不得超过 200 ms。
-- 基础 PWM：起步 4000、巡航 3500、接近目标 2600。前进和倒车均在距离内部目标不足或等于 25 cm 时降速，速度切换具有 5 cm 回差，并保留轮速同步。以上数值尚未乘全局 PWM 比例。
+- 基础 PWM：远距离起步 4000、巡航 3500、接近目标 2600。起始距目标不超过 25 cm 时使用 2600 起步，两轮开始运动后即可结束起步阶段；接近目标时立即降速，加速仍限制变化率。前进和倒车均在距离内部目标不足或等于 25 cm 时降速，速度切换具有 5 cm 回差，并保留轮速同步。以上数值尚未乘全局 PWM 比例。
 - 总运行上限 30 秒，任一轮编码器行程达到 200 cm 时停止。不使用 GOCM 行程补偿；成功停止仍执行刹车和舵机回中，最终实际距离可能与触发读数不同。
 
 完成/故障事件的字段顺序：
 
 ```text
-DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-or-INF>,us_status=<int>
+DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-or-INF>,us_status=<int>,dir=<FORWARD|REVERSE|NONE|UNKNOWN>,us_age_ms=<uint>
 ```
 
 | `state` | `reason` | 含义 |
 |---|---|---|
-| `DONE` | `US_THRESHOLD` | 确认按运动方向越过目标，或起始确认等于目标 |
+| `DONE` | `US_THRESHOLD` | 确认提前刹车阈值，或起始确认到位容差 |
 | `ABORTED` | `ABORTED` | 用户发送停止命令 |
 | `SENSOR_ERROR` | `SENSOR_ERROR` | 触发驱动失败或起始持续无效测量 |
 | `TIMEOUT` | `TIMEOUT` | 达到总时间上限 |
 | `DISTANCE_LIMIT` | `DISTANCE_LIMIT` | 达到编码器行程上限 |
+
+成功完成时，`us_mm` 与 `us_status=0` 回报刹车前保存的条件触发样本，DONE 发送延迟超过 200 ms 也不会丢失。`dir` 为 FORWARD／REVERSE，静止到位容差内时为 NONE；`us_age_ms` 是触发时样本年龄。故障／中止仍按当前样本有效性和年龄回报，`dir=UNKNOWN`。这些字段表示触发停车的测量，停车后没有重新测量。实时 `STRAIGHT,STATUS` 仍将过期样本显示为 INF/-1。
 
 查询 UNTILUS 状态（替代 GOCM 的状态格式）：
 
@@ -120,7 +122,7 @@ OK,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,threshold_cm=<int>
 DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<decimal-or-FAR>
 ```
 
-- 向前直行，选定侧距离**严格大于**阈值时停车；等于阈值继续。阈值是传感器距离，不加超声波的保险杠偏移量。
+- 向前直行，选定侧距离**严格大于**阈值时停车；等于阈值继续。阈值是传感器距离，不加距离偏移量。
 - 阈值为整数厘米：LEFTIR 支持 10～50，RIGHTIR 支持 10～60，与当前标定表一致。
 - `FAR`、ADC 读取失败和转换错误均按无限远处理，正常回报 `state=DONE,ir_cm=FAR`，不作为 IR 传感器故障。
 - 起步前先采样，已满足条件则直接完成而不驱动车轮。行驶时约每 40 ms 采样一次，一次满足即可停车。
@@ -299,17 +301,17 @@ DONE,LOOP,state=<reason>,index=<1..4>,count=4
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STRAIGHT,STATUS
-< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=28,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
-< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=28,us_mm=197,us_status=0
+< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=20,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
+< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=20,us_mm=197,us_status=0,dir=FORWARD,us_age_ms=0
 
-> STRAIGHT,UNTILUS,193
+> STRAIGHT,UNTILUS,4
 < ERR,BAD_VALUE
 
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STOP
 < OK
-< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=28,us_mm=INF,us_status=-1
+< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=20,us_mm=INF,us_status=-1,dir=UNKNOWN,us_age_ms=0
 ```
 
 最后一个示例在取得首个有效样本前中止。RPi 应按字段名解析模式与终态，避免把 UNTILUS 的阈值当作 GOCM 的行程目标。

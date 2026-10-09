@@ -72,11 +72,16 @@ straight/turn/start failures.
 
 ## Bidirectional UNTILUS
 
-`STRAIGHT,UNTILUS,n` waits for consecutive fresh valid ultrasound measurements.
-If distance is above n cm it drives forward until consecutive measurements are
-strictly below n; if below n it reverses until consecutive measurements are
-strictly above n. Direction stays fixed after starting. Initial confirmed
-exact equality completes without driving. Approach speed reduction applies
-in either direction. Initial persistent missing/invalid readings produce
-SENSOR_ERROR without moving; invalid readings during motion cannot confirm a
-crossing. Existing STOP, timeout and maximum travel limits remain active.
+`STRAIGHT,UNTILUS,n` compares directly with sensor distance (`US,GET`), without
+an installation offset. Integer n is 5..200. Two fresh initial samples within
+±1 cm complete without driving; otherwise confirmed samples select direction.
+Forward brakes at target + lead and reverse at target − lead after two valid
+confirmations. Both lead settings are initially 5 cm from floor observations,
+capped at half the initial target error for small corrections. Starts within
+25 cm use PWM 2600 instead of 4000. Approach speed reduction is immediate;
+acceleration remains slew-limited. Brake duration is 150 ms. These initial
+lead estimates require floor retesting after the speed change.
+
+Missing initial measurements fault without moving. STOP, timeout and travel
+limits remain active. Successful DONE retains the pre-brake condition sample,
+with direction and its age at detection; live status retains freshness checks.

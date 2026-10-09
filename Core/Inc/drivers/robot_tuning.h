@@ -69,7 +69,7 @@
 #define MOTION_STILL_REQUIRED_MS         250U
 #define MOTION_STILL_TIMEOUT_MS          1000U
 #define MOTION_STILL_MAX_DELTA_COUNTS    0
-#define MOTOR_BRAKE_PULSE_MS             80U
+#define MOTOR_BRAKE_PULSE_MS             150U
 #define GYRO_REZERO_WARMUP_MS            30U
 #define GYRO_REZERO_SAMPLES              32U
 #define GYRO_REZERO_DELAY_MS             10U

@@ -8,6 +8,7 @@
 #include "sensors/ultrasonic_sensor.h"
 static uint32_t tick;
 static int drives, adc_fail;
+static uint32_t last_left_pwm, last_right_pwm;
 static int16_t encoder_delta;
 static float mock_yaw, mock_rate, mock_brake_rate, mock_last_rate;
 static uint8_t mock_gyro_ok = 1U, mock_braking;
@@ -40,9 +41,9 @@ RobotHW_EncoderSnapshot RobotHW_EncoderSnapshotRead(void)
 RobotHW_EncoderDelta RobotHW_EncoderDeltaRead(RobotHW_EncoderSnapshot *s)
 { RobotHW_EncoderDelta d = {encoder_delta, encoder_delta}; (void)s; return d; }
 void RobotHW_MotorSetForward(uint32_t l, uint32_t r)
-{ (void)l; (void)r; drives++; mock_direction = 1; mock_drive_servo = mock_servo; }
+{ last_left_pwm=l; last_right_pwm=r; drives++; mock_direction = 1; mock_drive_servo = mock_servo; }
 void RobotHW_MotorSetBackward(uint32_t l, uint32_t r)
-{ (void)l; (void)r; drives++; mock_direction = -1; mock_drive_servo = mock_servo; }
+{ last_left_pwm=l; last_right_pwm=r; drives++; mock_direction = -1; mock_drive_servo = mock_servo; }
 uint32_t RobotHW_MotorLeftMax(void) { return 7199; }
 uint32_t RobotHW_MotorRightMax(void) { return 7199; }
 uint32_t RobotHW_ClampPwm(int32_t x, uint32_t m) { return x < 0 ? 0 : (uint32_t)x > m ? m : (uint32_t)x; }
@@ -96,16 +97,26 @@ static void test_untilus_bidirectional(void)
         reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
         assert(drives == 0);
         uint32_t start = direction > 0 ? 400U : 100U;
-        uint32_t crossed = direction > 0 ? 199U : 201U;
+        uint32_t crossed = direction > 0 ? 250U : 150U;
         echo(start, 0); assert(drives == 0);
         echo(start, 0); assert(drives > 0 && mock_direction == direction);
-        echo(200U, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(direction > 0 ? 251U : 149U, 0); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(0U, -1); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(start, 0); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
         echo(crossed, 0); assert(Straight_State() == STRAIGHT_DONE);
+        uint32_t stop_mm, stop_age, current_mm;
+        int8_t stop_direction; int current_status;
+        tick += 1000U; /* Brake/UART/gyro delay must not erase the result. */
+        assert(Straight_UltrasonicStopReading(&stop_mm, &stop_age, &stop_direction));
+        assert(stop_mm == crossed && stop_direction == direction && stop_age <= 200U);
+        Straight_UltrasonicStatus(0, &current_mm, &current_status, 0);
+        assert(current_mm == UINT32_MAX && current_status == -1);
+        assert(Straight_StartUntilUltrasonicCm(20) == 0);
+        assert(!Straight_UltrasonicStopReading(0, 0, 0));
+
     }
     reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
     echo(100U, 0); echo(400U, 0); assert(drives == 0);
@@ -114,6 +125,9 @@ static void test_untilus_bidirectional(void)
     reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
     echo(200U, 0); echo(200U, 0);
     assert(Straight_State() == STRAIGHT_DONE && drives == 0);
+    uint32_t equality_mm; int8_t equality_dir;
+    assert(Straight_UltrasonicStopReading(&equality_mm, 0, &equality_dir));
+    assert(equality_mm == 200U && equality_dir == 0);
     reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
     for (int i = 0; i < 10 && Straight_State() == STRAIGHT_RUNNING; i++) echo(0, -1);
     assert(Straight_State() == STRAIGHT_SENSOR_ERROR && drives == 0);
@@ -123,7 +137,29 @@ static void test_untilus_bidirectional(void)
     reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
     echo(100, 0); echo(100, 0); tick += 30000; Straight_Step();
     assert(Straight_State() == STRAIGHT_TIMEOUT);
-    puts("PASS: UNTILUS forward/reverse, strict crossing, confirmation/noise, unknown initial distance, equality, STOP, timeout");
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        reset(); assert(Straight_StartUntilUltrasonicCm(35) == 0);
+        uint32_t start = direction > 0 ? 500U : 200U;
+        uint32_t brake = direction > 0 ? 400U : 300U;
+        echo(start, 0); echo(start, 0);
+        assert(mock_direction == direction);
+        echo(brake, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(brake, 0); assert(Straight_State() == STRAIGHT_DONE);
+        uint32_t mm; int8_t dir;
+        assert(Straight_UltrasonicStopReading(&mm, 0, &dir) && mm == brake && dir == direction);
+        /* Repeat near target must not drive in either direction. */
+        int previous_drives = drives;
+        assert(Straight_StartUntilUltrasonicCm(35) == 0);
+        echo(direction > 0 ? 345U : 355U, 0); echo(direction > 0 ? 345U : 355U, 0);
+        assert(Straight_State() == STRAIGHT_DONE && drives == previous_drives);
+    }
+    reset(); assert(Straight_StartUntilUltrasonicCm(35) == 0);
+    echo(330U, 0); echo(330U, 0);
+    assert(mock_direction == -1 && last_left_pwm == 2600U && last_right_pwm == 2600U);
+    echo(330U, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+    echo(340U, 0); echo(340U, 0); assert(Straight_State() == STRAIGHT_DONE);
+    puts("PASS: UNTILUS forward/reverse, advance brake threshold, confirmation/noise, unknown initial distance, equality, STOP, timeout");
 }
 int main(void)
 {

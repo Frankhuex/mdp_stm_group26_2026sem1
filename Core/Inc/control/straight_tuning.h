@@ -48,6 +48,9 @@
 #define SHORT_PROFILE_MAX_CM            20
 #define MIN_COMMAND_DISTANCE_CM         10
 #define MAX_COMMAND_DISTANCE_CM         200
+/* Floor observation: GOCM stops about 2 cm short with the current brake.
+ * Add travel before braking, in both gears and both distance profiles. */
+#define GOCM_BRAKE_DELAY_CM              2.0f
 
 /* SHORT profile: most floor-sensitive values for 10..20 cm. */
 #define SHORT_CALIBRATION_OFFSET_CM     (-2.5f)
@@ -134,6 +137,10 @@
 #define US_MAX_THRESHOLD_CM              200
 #define US_CRUISE_PWM                    3500U
 #define US_APPROACH_PWM                  2600U
+/* Floor observation: both directions travel about 5 cm after the trigger. */
+#define US_FORWARD_STOP_LEAD_MM           50U
+#define US_REVERSE_STOP_LEAD_MM           50U
+#define US_ARRIVAL_TOLERANCE_MM           10U
 #define US_KICKSTART_PWM                 4000U
 #define US_KICKSTART_MIN_MS                120U
 #define US_KICKSTART_MAX_MS               400U
