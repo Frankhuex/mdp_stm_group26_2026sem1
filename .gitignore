@@ -1,0 +1,15 @@
+# STM32CubeIDE build artifacts (regenerable) — keep makefiles, drop outputs
+Debug/**/*.o
+Debug/**/*.d
+Debug/**/*.su
+Debug/*.elf
+Debug/*.bin
+Debug/*.list
+Debug/*.map
+Debug/default.size.stdout
+.DS_Store
+
+# Standalone toolchain, build outputs and device backups
+.tools/
+build/
+backups/

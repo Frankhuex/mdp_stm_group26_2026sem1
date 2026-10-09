@@ -1,0 +1,59 @@
+MDP21 STM32 - START HERE
+========================
+
+1. Open this file:
+   Core/Inc/test_config.h
+
+2. Change ONLY this line:
+   #define ACTIVE_TEST TEST_IR
+
+3. Examples:
+   TEST_MOTOR                 -> test_motor.c
+   TEST_ENCODER               -> test_encoder.c
+   TEST_SERVO                 -> test_servo.c
+   TEST_OLED                  -> test_oled.c
+   TEST_UART                  -> test_uart.c
+   TEST_IMU                   -> test_imu.c
+   TEST_ACCEL                 -> test_accel.c
+   TEST_IR                    -> test_ir.c
+   TEST_ULTRASONIC            -> test_ultrasonic.c
+   TEST_GYRO_CALIBRATION      -> test_gyro_calibration.c
+   TEST_IR_CALIBRATION        -> test_ir_calibration.c
+   TEST_MIN_TURN_RADIUS       -> test_min_turn_radius.c
+   ASSESSMENT_COMMAND_INTERFACE -> assessment/command_interface.c
+
+IR NEXT STEP
+------------
+Start with:
+   #define ACTIVE_TEST TEST_IR
+
+After LEFT and RIGHT IR both respond, use:
+   #define ACTIVE_TEST TEST_IR_CALIBRATION
+
+FINAL INTEGRATED COMMAND MODE
+-----------------------------
+Use:
+   #define ACTIVE_TEST ASSESSMENT_COMMAND_INTERFACE
+
+Then commands include:
+   STRAIGHT,GOCM,10
+   STRAIGHT,GOCM,80
+   STRAIGHT,GOCM,100
+   STRAIGHT,GOCM,120
+   TURN,RIGHT,R=43,A=90
+   STOP
+
+
+FLOOR / MOVEMENT RETUNING
+=========================
+TEST_STRAIGHT_CONTROL -> tests/calibration/test_straight_control.c
+TEST_TURN_ANGLE       -> tests/calibration/test_turn_angle.c
+
+Straight parameters: Core/Inc/control/straight_tuning.h
+Turn parameters:     Core/Inc/control/turn_tuning.h
+
+Current straight profile rule:
+  10..50 cm  -> SHORT
+  51..200 cm -> LONG
+
+See docs/FLOOR_RETUNING.md.

@@ -1,0 +1,12 @@
+arm-none-eabi-gcc "../Core/Src/tests/test_hardcode_command_executor.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F407xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I../Middlewares/Third_Party/FreeRTOS/Source/include -I../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -MMD -MP -MF"Core/Src/tests/test_hardcode_command_executor.d" -MT"Core/Src/tests/test_hardcode_command_executor.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/tests/test_hardcode_command_executor.o"
+arm-none-eabi-gcc -o "mdp21_8.elf" @"objects.list"   -mcpu=cortex-m4 -T"C:\Users\HU0021AN\Downloads\mdp21_8_v1_final\mdp21_8\STM32F407VETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="mdp21_8.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+'Finished building target: mdp21_8.elf'
+' '
+arm-none-eabi-size   mdp21_8.elf 
+arm-none-eabi-objdump -h -S  mdp21_8.elf  > "mdp21_8.list"
+   text	   data	    bss	    dec	    hex	filename
+  86360	    148	  75356	 161864	  27848	mdp21_8.elf
+'Finished building: default.size.stdout'
+' '
+'Finished building: mdp21_8.list'
+' '
