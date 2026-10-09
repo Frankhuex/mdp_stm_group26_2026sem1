@@ -27,7 +27,7 @@ Do not add duplicate motor, encoder, gyro, straight, or turn implementations her
 
 `LATERAL,STATUS` reports the source, target distance, rounded angle, stage,
 turn result and start error. `STOP` or `LATERAL,STOP` cancels the whole action;
-`TURN,STOP` also cancels an active lateral action. Hardcoded sequences wait
+`TURN,STOP` and `STRAIGHT,STOP` also cancel an active lateral action. Hardcoded sequences wait
 for both arcs and stop the sequence on either arc's failure.
 
 The controller executes two forward arcs of equal angle and opposite steering:
@@ -45,20 +45,30 @@ For d = 30 cm the command angle is 63 degrees; IR = 30 cm adds 15 cm and uses
 displacement; verify on the floor.
 
 IR mode reads `IRSensor_ReadDistance` once at command start and uses the
-selected side's calibrated distance for both arcs. Only `IR_RANGE_VALID`
+selected side's calibrated distance for both arcs. After validating the target
+and computing the angle, it first drives forward until that side's IR is
+strictly greater than 50 cm, then executes the two arcs immediately after the
+normal straight stop/brake. No extra vehicle-length advance is added.
+`stage=0` is the forward IR approach; `stage=1/2` are the two turns.
+`ir_cm_x10` retains the command-start reading throughout all stages.
+Only `IR_RANGE_VALID`
 readings in the calibrated 10..50 cm range are accepted. The original
 STRAIGHT condition-stop caches remain independent and are not used here.
 The 15 cm is half the 10 cm obstacle width plus half the 20 cm vehicle width.
 A measured IR distance above 40 cm produces a displacement above 55 cm and
 returns `ERR,BAD_VALUE`. ADC failure, FAR, NEAR or an invalid selected-side
-reading returns `ERR,IR_MEASUREMENT_INVALID` without starting a turn.
+reading at command start returns `ERR,IR_MEASUREMENT_INVALID` without moving.
+During the forward approach, FAR counts as greater than 50 cm; ADC/selected-side
+errors abort with STRAIGHT_ERROR. Approach timeout/travel limit/STOP also prevent
+both turns. Numeric mode starts its two arcs directly and has no IR approach.
 Completion emits one `DONE,LATERAL` for the composite, including the failing
 stage when applicable; individual arcs do not emit `DONE,TURN`.
 
 Host validation: compile `tests/host/test_lateral.c` together with
 `Core/Src/control/lateral_control.c`, using `Core/Inc` headers and the math
-library. The test simulates TURN and checks geometry, side selection, live IR
-measurement/offset, limits, busy handling, STOP and turn/start failures.
+library. The test simulates STRAIGHT and TURN and checks geometry, side selection, live IR
+measurement/offset, approach-before-turn order, limits, busy handling, STOP and
+straight/turn/start failures.
 
 ## Bidirectional UNTILUS
 

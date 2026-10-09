@@ -121,11 +121,8 @@ static const char *const fast_left2_commands[] =
     "TURN,RIGHT,R=35,A=90",
 	"STRAIGHT,GOCM,30",
     "STRAIGHT,RIGHTIR,LT,50",
-    "TURN,RIGHT,R=35,A=90",
-	"STRAIGHT,GOCM,-30",
-    "STRAIGHT,RIGHTIR,LT,50",
-    "STRAIGHT,GOCM,-35",
-    "TURN,LEFT,R=35,A=90",
+
+    "LATERAL,RIGHT,IR",
     "STRAIGHT,UNTILUS,15",
 };
 static const char *const fast_right1_commands[] =
@@ -150,11 +147,8 @@ static const char *const fast_right2_commands[] =
     "TURN,LEFT,R=35,A=90",
 	"STRAIGHT,GOCM,30",
     "STRAIGHT,LEFTIR,LT,50",
-    "TURN,LEFT,R=35,A=90",
-	"STRAIGHT,GOCM,-30",
-    "STRAIGHT,LEFTIR,LT,50",
-    "STRAIGHT,GOCM,-35",
-    "TURN,RIGHT,R=35,A=90",
+    
+    "LATERAL,LEFT,IR",
     "STRAIGHT,UNTILUS,15",
 };
 
@@ -404,20 +398,22 @@ static const char *LateralStateText(lateral_state_t state)
         case LATERAL_ABORTED: return "ABORTED";
         case LATERAL_TURN_ERROR: return "TURN_ERROR";
         case LATERAL_START_ERROR: return "START_ERROR";
+        case LATERAL_STRAIGHT_ERROR: return "STRAIGHT_ERROR";
         default: return "UNKNOWN";
     }
 }
 static void SendLateralStatus(uint8_t done)
 {
     lateral_status_t st;
-    char msg[192];
+    char msg[256];
     Lateral_Status(&st);
     snprintf(msg, sizeof(msg),
-        "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,turn_state=%s,start_rc=%d\r\n",
+        "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,ir_cm_x10=%lu,straight_state=%s,turn_state=%s,start_rc=%d\r\n",
         done ? "DONE," : "", LateralStateText(st.state), st.side ? "RIGHT" : "LEFT",
         st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
         (unsigned long)(st.distance_cm_x10 % 10U), (long)st.angle_deg,
-        (unsigned)st.stage, TurnStateText(st.turn_state), st.start_rc);
+        (unsigned)st.stage, (unsigned long)st.initial_ir_cm_x10,
+        StraightStateText(st.straight_state), TurnStateText(st.turn_state), st.start_rc);
     Cmd_Send(msg);
 }
 
@@ -1302,6 +1298,7 @@ static void DispatchLine(char *line)
         else if (tok1 != NULL && strcmp(tok1, "STOP") == 0 && tok2 == NULL)
         {
             uint8_t aborted = (Straight_State() == STRAIGHT_RUNNING) ? 1U : 0U;
+            Lateral_Stop();
             Straight_Stop();
             if (!AnyMotionRunning()) MotionHeading_Reset();
             {

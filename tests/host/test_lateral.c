@@ -18,6 +18,15 @@ int IRSensor_ReadDistance(IRSensorDistanceReading *out, uint32_t samples)
 static turn_state_t turn;
 static straight_state_t straight;
 static int calls, fail_call, fail_rc;
+static int straight_calls, straight_rc;
+static uint8_t approach_side;
+int Straight_StartUntilIRGreaterValidCm(int32_t threshold, uint8_t side)
+{
+    assert(threshold == 50); approach_side = side; straight_calls++;
+    if (straight_rc) return straight_rc;
+    straight = STRAIGHT_RUNNING; return 0;
+}
+void Straight_Stop(void) { if (straight == STRAIGHT_RUNNING) straight = STRAIGHT_ABORTED; }
 static int32_t radii[2], angles[2];
 static int8_t dirs[2];
 turn_state_t Turn_State(void) { return turn; }
@@ -36,6 +45,7 @@ static void reset(void)
 {
     Lateral_Init(); turn = TURN_IDLE; straight = STRAIGHT_IDLE;
     calls = fail_call = 0; fail_rc = -1;
+    straight_calls = straight_rc = 0;
     IRSensorDistanceReading empty = {0};
     ir = empty;
     ir.left_status = ir.right_status = IR_RANGE_ERROR;
@@ -68,8 +78,13 @@ int main(void)
         assert(Lateral_Start(side, 1, 0) == 0);
         assert(status().distance_cm_x10 == (side ? 350U : 450U));
         assert(status().angle_deg == (side ? 69 : 80));
-        assert(ir_reads == 1);
+        assert(ir_reads == 1 && straight_calls == 1 && approach_side == side);
+        assert(calls == 0 && status().stage == 0 && status().initial_ir_cm_x10 == (side ? 200U : 300U));
+        Lateral_Step(); assert(calls == 0);
         ir.left_cm_x10 = ir.right_cm_x10 = 100;
+        assert(status().distance_cm_x10 == (side ? 350U : 450U));
+        straight = STRAIGHT_DONE; Lateral_Step();
+        assert(calls == 1 && status().stage == 1);
         assert(status().distance_cm_x10 == (side ? 350U : 450U));
         turn = TURN_DONE; Lateral_Step();
         assert(ir_reads == 1); /* second arc uses the command-start measurement */
@@ -97,6 +112,27 @@ int main(void)
         else { ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300; }
         assert(Lateral_Start(side, 1, 0) == 0); /* opposite sensor error ignored */
     }
+    for (int outcome = STRAIGHT_DONE; outcome <= STRAIGHT_STALL; outcome++)
+    {
+        if (outcome == STRAIGHT_DONE) continue;
+        reset(); ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300;
+        assert(Lateral_Start(0, 1, 0) == 0);
+        straight = outcome; Lateral_Step();
+        assert(calls == 0 && Lateral_State() == (outcome == STRAIGHT_ABORTED ? LATERAL_ABORTED : LATERAL_STRAIGHT_ERROR));
+    }
+    reset(); ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300;
+    assert(Lateral_Start(0, 1, 0) == 0); Lateral_Stop(); Lateral_Step();
+    assert(calls == 0 && straight == STRAIGHT_ABORTED && Lateral_State() == LATERAL_ABORTED);
+    reset(); ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300;
+    assert(Lateral_Start(0, 1, 0) == 0); straight = STRAIGHT_DONE;
+    Lateral_Stop(); Lateral_Step(); assert(calls == 0 && Lateral_State() == LATERAL_ABORTED);
+    reset(); ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300;
+    straight_rc = -4;
+    assert(Lateral_Start(0, 1, 0) == -4 && calls == 0 && Lateral_State() == LATERAL_START_ERROR);
+    reset(); ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 300;
+    assert(Lateral_Start(0, 1, 0) == 0); fail_call = 1;
+    straight = STRAIGHT_DONE; Lateral_Step();
+    assert(Lateral_State() == LATERAL_START_ERROR && calls == 1);
     reset();
     assert(Lateral_Start(2, 0, 300) == -2);
     assert(Lateral_Start(0, 2, 300) == -2);
@@ -125,5 +161,5 @@ int main(void)
     reset(); assert(Lateral_Start(1, 0, 300) == 0);
     turn = TURN_DONE; Lateral_Step(); Lateral_Stop(); Lateral_Step();
     assert(Lateral_State() == LATERAL_ABORTED && calls == 2 && turn == TURN_ABORTED);
-    puts("PASS: lateral geometry, both directions/modes, live IR snapshot and invalid measurements, bounds, busy, both-stage STOP and faults");
+    puts("PASS: lateral geometry, both directions/modes, IR snapshot, approach-before-arcs, approach errors/STOP, bounds, busy, both-stage STOP and faults");
 }

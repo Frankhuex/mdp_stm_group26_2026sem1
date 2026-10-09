@@ -37,6 +37,8 @@ straight_ir_comparison_t Straight_IRComparison(void);
 /* Forward until selected IR > threshold. side: 0=LEFT, 1=RIGHT.
  * FAR or ADC failure completes normally, per command policy. */
 int Straight_StartUntilIRGreaterCm(int32_t threshold_cm, uint8_t side);
+/* GT for lateral approach: FAR completes, ADC/selected-side error aborts. */
+int Straight_StartUntilIRGreaterValidCm(int32_t threshold_cm, uint8_t side);
 /* Returns 0=not IR, 1=LEFTIR, 2=RIGHTIR. UINT32_MAX distance means FAR. */
 int Straight_IRStatus(int32_t *threshold_cm, uint32_t *cm_x10);
 /* Last condition-triggered stop distance per side, in 0.1 cm (237 = 23.7 cm).

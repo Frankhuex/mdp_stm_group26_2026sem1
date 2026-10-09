@@ -128,6 +128,17 @@ static void test_untilus_bidirectional(void)
 int main(void)
 {
     test_untilus_bidirectional();
+    reset(); assert(Straight_StartUntilIRGreaterValidCm(50, 0) == 0);
+    step(); assert(Straight_State() == STRAIGHT_RUNNING); /* equality */
+    adc_fail = 1; step(); assert(Straight_State() == STRAIGHT_SENSOR_ERROR);
+    reset(); adc_fail = 1;
+    assert(Straight_StartUntilIRGreaterValidCm(50, 1) == 0);
+    assert(Straight_State() == STRAIGHT_SENSOR_ERROR && drives == 0);
+    reset(); assert(Straight_StartUntilIRGreaterValidCm(50, 1) == 0);
+    ir.right_status = IR_RANGE_FAR; step(); assert(Straight_State() == STRAIGHT_DONE);
+    reset(); assert(Straight_StartUntilIRGreaterValidCm(50, 0) == 0);
+    ir.left_cm_x10 = 501; step(); assert(Straight_State() == STRAIGHT_DONE);
+
     reset();
     assert(Straight_LeftIRStopCmX10 == UINT32_MAX && Straight_RightIRStopCmX10 == UINT32_MAX);
     ir.left_cm_x10 = 501;

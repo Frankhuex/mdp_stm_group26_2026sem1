@@ -22,6 +22,7 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     if (lc.state == LATERAL_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
         Turn_State() == TURN_RUNNING) return -3;
     if (side > 1U || from_ir > 1U) return -2;
+    uint32_t initial_ir = 0U;
     if (from_ir)
     {
         IRSensorDistanceReading reading;
@@ -32,6 +33,7 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
         distance_cm_x10 = side ? reading.right_cm_x10 : reading.left_cm_x10;
         if (distance_cm_x10 < IR_SENSOR_VALID_MIN_CM_X10 ||
             distance_cm_x10 > IR_SENSOR_VALID_MAX_CM_X10) return -5;
+        initial_ir = distance_cm_x10;
         /* Half obstacle width plus half vehicle width, converted to 0.1 cm. */
         uint32_t offset = (LATERAL_OBSTACLE_WIDTH_CM + LATERAL_VEHICLE_WIDTH_CM) * 5U;
         if (distance_cm_x10 > UINT32_MAX - offset) return -2;
@@ -45,10 +47,12 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     if (rounded < CMD_MIN_ANGLE_DEG || rounded > 90 || rounded > CMD_MAX_ANGLE_DEG) return -2;
     lc.side = side;
     lc.from_ir = from_ir;
-    lc.stage = 1U;
+    lc.stage = from_ir ? 0U : 1U;
+    lc.initial_ir_cm_x10 = initial_ir;
     lc.distance_cm_x10 = distance_cm_x10;
     lc.angle_deg = rounded;
-    lc.start_rc = StartArc(side);
+    lc.start_rc = from_ir ? Straight_StartUntilIRGreaterValidCm(50, side) : StartArc(side);
+    lc.straight_state = Straight_State();
     lc.turn_state = Turn_State();
     lc.state = lc.start_rc == 0 ? LATERAL_RUNNING : LATERAL_START_ERROR;
     return lc.start_rc;
@@ -56,6 +60,21 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
 void Lateral_Step(void)
 {
     if (lc.state != LATERAL_RUNNING) return;
+    if (lc.stage == 0U)
+    {
+        lc.straight_state = Straight_State();
+        if (lc.straight_state == STRAIGHT_RUNNING) return;
+        if (lc.straight_state != STRAIGHT_DONE)
+        {
+            lc.state = lc.straight_state == STRAIGHT_ABORTED ? LATERAL_ABORTED : LATERAL_STRAIGHT_ERROR;
+            return;
+        }
+        lc.stage = 1U;
+        lc.start_rc = StartArc(lc.side);
+        lc.turn_state = Turn_State();
+        if (lc.start_rc != 0) lc.state = LATERAL_START_ERROR;
+        return;
+    }
     lc.turn_state = Turn_State();
     if (lc.turn_state == TURN_RUNNING) return;
     if (lc.turn_state != TURN_DONE)
@@ -74,7 +93,9 @@ void Lateral_Stop(void)
     if (lc.state != LATERAL_RUNNING) return;
     /* Cancel the composite first so a completed first arc cannot launch arc 2. */
     lc.state = LATERAL_ABORTED;
-    Turn_Stop();
+    if (lc.stage == 0U) Straight_Stop();
+    else Turn_Stop();
+    lc.straight_state = Straight_State();
     lc.turn_state = Turn_State();
 }
 lateral_state_t Lateral_State(void) { return lc.state; }

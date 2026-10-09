@@ -41,6 +41,7 @@ static straight_profile_t sc_profile = STRAIGHT_PROFILE_LONG;
 static int8_t sc_dir = 1;
 static uint16_t sc_fixed_steer_us;
 static uint8_t sc_until_us;
+static uint8_t sc_ir_strict_gt;
 static uint8_t sc_ir_mode; /* 0=off, 1=LEFTIR, 2=RIGHTIR */
 static straight_ir_comparison_t sc_ir_comparison;
 static int32_t sc_ir_threshold_cm;
@@ -137,6 +138,7 @@ static uint8_t ReadIRStopCondition(void)
         if (status == IR_RANGE_NEAR) return 1U; /* Below calibrated 10 cm. */
         return sc_ir_cm_x10 < (uint32_t)sc_ir_threshold_cm * 10U;
     }
+    if (sc_ir_strict_gt && status == IR_RANGE_ERROR) return 2U;
     /* Preserve legacy GT infinity policy for FAR and failed reads. */
     return sc_ir_cm_x10 > (uint32_t)sc_ir_threshold_cm * 10U;
 }
@@ -369,7 +371,7 @@ void Straight_Init(void)
 
 static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
                                     int32_t ir_threshold_cm, straight_ir_comparison_t comparison,
-                                    uint16_t fixed_steer_us)
+                                    uint16_t fixed_steer_us, uint8_t strict_gt)
 {
     int32_t abs_cm;
     int prep_rc;
@@ -400,6 +402,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 
     sc_until_us = 0U;
     sc_ir_mode = ir_mode;
+    sc_ir_strict_gt = strict_gt;
     sc_ir_comparison = comparison;
     sc_ir_threshold_cm = ir_threshold_cm;
     sc_ir_cm_x10 = UINT32_MAX;
@@ -513,7 +516,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 
 int Straight_StartCm(int32_t target_cm)
 {
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U);
 }
 
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
@@ -523,7 +526,7 @@ int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
         servo_us > (int32_t)SERVO_CENTER_US + STRAIGHT_CAL_MAX_OFFSET_US ||
         servo_us <= (int32_t)CMD_SERVO_LEFT_US || servo_us >= (int32_t)CMD_SERVO_RIGHT_US)
         return -2;
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us, 0U);
 }
 
 uint32_t Straight_FixedSteeringUs(void) { return sc_fixed_steer_us; }
@@ -540,7 +543,16 @@ int Straight_StartUntilIRCm(int32_t threshold_cm, uint8_t side,
     /* Match the actual driver calibration: LEFT 10..50, RIGHT 10..60 cm. */
     if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
         return -2;
-    return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U);
+    return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U, 0U);
+}
+
+/* Composite lateral approach: FAR satisfies GT; acquisition errors must abort. */
+int Straight_StartUntilIRGreaterValidCm(int32_t threshold_cm, uint8_t side)
+{
+    if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
+        return -2;
+    return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U,
+                                   threshold_cm, STRAIGHT_IR_GT, 0U, 1U);
 }
 
 /* RUNNING includes the stationary initial measurement wait, so every existing
