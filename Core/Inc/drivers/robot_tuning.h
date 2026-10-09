@@ -29,7 +29,7 @@
 #define CMD_LEFT_MIN_RADIUS_CM          18  /* hard steering limit */
 #define CMD_LEFT_SOFT_MIN_RADIUS_CM     20  /* normal lateral manoeuvres */
 #define LATERAL_OBSTACLE_WIDTH_CM       10U
-#define LATERAL_VEHICLE_WIDTH_CM        20U
+#define LATERAL_IR_TO_CENTER_CM         5U
 #if CMD_LEFT_SOFT_MIN_RADIUS_CM < CMD_LEFT_MIN_RADIUS_CM
 #error "Left soft radius must respect the hard limit"
 #endif

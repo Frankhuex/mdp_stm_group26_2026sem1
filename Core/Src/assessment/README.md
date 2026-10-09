@@ -20,8 +20,8 @@ Do not add duplicate motor, encoder, gyro, straight, or turn implementations her
 
 | Command | Final lateral displacement |
 | --- | --- |
-| `LATERAL,LEFT,IR` | Fresh left IR measurement + 15 cm |
-| `LATERAL,RIGHT,IR` | Fresh right IR measurement + 15 cm |
+| `LATERAL,LEFT,IR` | Fresh left IR measurement + 10 cm |
+| `LATERAL,RIGHT,IR` | Fresh right IR measurement + 10 cm |
 | `LATERAL,LEFT,n` | n cm left; integer n from 1 to 55 |
 | `LATERAL,RIGHT,n` | n cm right; integer n from 1 to 55 |
 
@@ -40,8 +40,8 @@ With R = 20 + 35 = 55 cm, angle = acos(1 - d/R), converted to degrees and
 rounded to the nearest integer for the existing TURN interface. Each arc is
 at most 90 degrees, so d must be positive and at most 55 cm. The ideal forward
 advance is sqrt(2*R*d - d*d); the manoeuvre needs room ahead as well as sideways.
-For d = 30 cm the command angle is 63 degrees; IR = 30 cm adds 15 cm and uses
-80 degrees. Integer angle rounding and real turn calibration affect the actual
+For d = 30 cm the command angle is 63 degrees; IR = 30 cm adds 10 cm and uses
+74 degrees. Integer angle rounding and real turn calibration affect the actual
 displacement; verify on the floor.
 
 IR mode reads `IRSensor_ReadDistance` once at command start and uses the
@@ -54,8 +54,8 @@ normal straight stop/brake. No extra vehicle-length advance is added.
 Only `IR_RANGE_VALID`
 readings in the calibrated 10..50 cm range are accepted. The original
 STRAIGHT condition-stop caches remain independent and are not used here.
-The 15 cm is half the 10 cm obstacle width plus half the 20 cm vehicle width.
-A measured IR distance above 40 cm produces a displacement above 55 cm and
+The 10 cm is half the 10 cm obstacle width plus the 5 cm IR-to-centre offset.
+A measured IR distance above 45 cm produces a displacement above 55 cm and
 returns `ERR,BAD_VALUE`. ADC failure, FAR, NEAR or an invalid selected-side
 reading at command start returns `ERR,IR_MEASUREMENT_INVALID` without moving.
 During the forward approach, FAR counts as greater than 50 cm; ADC/selected-side

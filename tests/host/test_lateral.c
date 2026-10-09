@@ -76,25 +76,25 @@ int main(void)
         reset(); ir.left_cm_x10 = 300; ir.right_cm_x10 = 200;
         ir.left_status = ir.right_status = IR_RANGE_VALID;
         assert(Lateral_Start(side, 1, 0) == 0);
-        assert(status().distance_cm_x10 == (side ? 350U : 450U));
-        assert(status().angle_deg == (side ? 69 : 80));
+        assert(status().distance_cm_x10 == (side ? 300U : 400U));
+        assert(status().angle_deg == (side ? 63 : 74));
         assert(ir_reads == 1 && straight_calls == 1 && approach_side == side);
         assert(calls == 0 && status().stage == 0 && status().initial_ir_cm_x10 == (side ? 200U : 300U));
         Lateral_Step(); assert(calls == 0);
         ir.left_cm_x10 = ir.right_cm_x10 = 100;
-        assert(status().distance_cm_x10 == (side ? 350U : 450U));
+        assert(status().distance_cm_x10 == (side ? 300U : 400U));
         straight = STRAIGHT_DONE; Lateral_Step();
         assert(calls == 1 && status().stage == 1);
-        assert(status().distance_cm_x10 == (side ? 350U : 450U));
+        assert(status().distance_cm_x10 == (side ? 300U : 400U));
         turn = TURN_DONE; Lateral_Step();
         assert(ir_reads == 1); /* second arc uses the command-start measurement */
         Lateral_Stop(); assert(Lateral_State() == LATERAL_ABORTED);
         Lateral_Step(); assert(calls == 2 && turn == TURN_ABORTED);
     }
     reset(); assert(Lateral_Start(0, 1, 0) == -5 && calls == 0);
-    ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 401;
+    ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 451;
     assert(Lateral_Start(0, 1, 0) == -2 && calls == 0);
-    ir.left_cm_x10 = 400;
+    ir.left_cm_x10 = 450;
     assert(Lateral_Start(0, 1, 0) == 0 && status().angle_deg == 90);
     for (uint8_t side = 0; side < 2; side++)
     {

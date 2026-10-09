@@ -34,8 +34,8 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
         if (distance_cm_x10 < IR_SENSOR_VALID_MIN_CM_X10 ||
             distance_cm_x10 > IR_SENSOR_VALID_MAX_CM_X10) return -5;
         initial_ir = distance_cm_x10;
-        /* Half obstacle width plus half vehicle width, converted to 0.1 cm. */
-        uint32_t offset = (LATERAL_OBSTACLE_WIDTH_CM + LATERAL_VEHICLE_WIDTH_CM) * 5U;
+        /* Half obstacle width plus IR-to-centre offset, converted to 0.1 cm. */
+        uint32_t offset = LATERAL_OBSTACLE_WIDTH_CM * 5U + LATERAL_IR_TO_CENTER_CM * 10U;
         if (distance_cm_x10 > UINT32_MAX - offset) return -2;
         distance_cm_x10 += offset;
     }

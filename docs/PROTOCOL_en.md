@@ -1,7 +1,7 @@
 # MDP21 STM32 ↔ RPi Communication Protocol (English)
 
-**Version**: v1.10  
-**Date**: 2026-09-23  
+**Version**: v1.11  
+**Date**: 2026-10-09  
 **Peer**: Raspberry Pi / PuTTY  
 **Implementation**: [command_interface.c](../Core/Src/assessment/command_interface.c)
 
@@ -39,6 +39,7 @@
 | `NO_DEVICE` | Required device initialization failed |
 | `UNKNOWN_CMD` | Unknown command while idle; unknown commands during motion return `BUSY` |
 | `RX_LINE_OVERFLOW` | Payload exceeds RX buffer capacity |
+| `IR_MEASUREMENT_INVALID` | LATERAL initial selected-side IR is unavailable or outside calibration |
 
 `TIMEOUT`, `SENSOR_ERROR` and `DISTANCE_LIMIT` are motion terminal states in completion/status messages, not standalone `ERR` reasons emitted by this interface.
 
@@ -100,15 +101,14 @@ STRAIGHT,UNTILUS,<cm>
 OK,mode=UNTILUS,threshold_cm=<cm>
 ```
 
-`cm` is a **positive integer from 5 to 200**, specifying bumper/object clearance, not travel distance. The firmware adds 8 cm internally because the ultrasonic sensor sits behind the bumper, so the controller compares against sensor/object clearance. Motion is forward only. Stop on the first fresh valid reading **strictly below** the internal threshold; equality does not complete the command.
+`cm` is an integer bumper/object clearance. The UART parser adds 8 cm before calling the controller: the internal sensor/object target is `cm + 8`. The controller accepts internal thresholds 5..200 cm, so the current parser accepts inputs −3..192 cm. `OK` echoes the input; completion and status report the internal threshold. For input 20, compare ultrasound against 280 mm and expect `threshold_cm=28` in completion/status.
 
-- Wait for startup confirmation. Two consecutive valid readings already below threshold complete without motor power; two consecutive valid readings above threshold start driving. Three consecutive unknown readings also start driving and are treated as infinity.
-- PB15=TRIG, PC8=ECHO via a 5V-to-3.3V divider, matching the working `mdp21_8_ultrasonic` example. TIM8_CH3 captures both edges at 1 MHz (ARR=65535); the driver starts input capture interrupts and reads CCR3.
-- Triggers are at least 60 ms apart; each measurement times out after 60 ms. Trigger/capture follows the reference. UNTILUS treats zero or invalid results as infinity without changing the standalone sensor test.
-- No echo, invalid/zero readings and readings older than 200 ms mean infinity: continue at cruise PWM and keep measuring. There is no 500 ms startup failure or stale-sample stop. STOP, 30-second timeout and 200 cm travel limit still apply.
-- Base PWM: kickstart 4000, cruise 3500; at or below threshold + 25 cm, reduce to 2600, with existing wheel synchronization corrections applied.
-- Total runtime is limited to 30 seconds; either wheel reaching 200 cm encoder travel stops motion. Clearance threshold and travel limit are distinct.
-- GOCM travel compensation is not used. Stopping applies a short both-inputs-high brake pulse, then zeros motor PWM and centers steering. Stationary clearance may be smaller than the reading that triggered the stop.
+- Wait stationary for two consecutive fresh valid readings on the same side of the internal target. Above it selects forward; below it selects reverse. Two initial readings exactly equal to the target complete without driving. A side change resets startup confirmation.
+- After starting, lock direction: forward stops after two consecutive valid readings strictly below the target; reverse stops after two strictly above it. Equality during motion continues. A nonqualifying or invalid reading resets stop confirmation.
+- Three consecutive invalid/zero/stale startup samples finish with SENSOR_ERROR without driving. A trigger-driver failure also faults. During motion, missing echoes do not confirm a crossing; sampling continues subject to STOP, timeout and travel limits.
+- PB15=TRIG, PC8=ECHO through a 5V-to-3.3V divider; TIM8_CH3 captures both edges at 1 MHz. Triggers are at least 60 ms apart; measurements time out after 60 ms. Valid samples must be no older than 200 ms.
+- Base PWM: kickstart 4000, cruise 3500, approach 2600. Both directions slow within 25 cm of the internal target, with 5 cm speed hysteresis and existing wheel synchronization. These are configured values before global PWM scaling.
+- Total runtime is limited to 30 seconds; either wheel reaching 200 cm encoder travel stops motion. GOCM travel compensation is not used. Normal completion applies braking and steering centring; final physical clearance may differ from the triggering reading.
 
 Completion/failure event, in field order:
 
@@ -118,9 +118,9 @@ DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-o
 
 | `state` | `reason` | Meaning |
 |---|---|---|
-| `DONE` | `US_THRESHOLD` | Fresh valid measurement strictly below threshold |
+| `DONE` | `US_THRESHOLD` | Confirmed directional crossing, or confirmed initial equality |
 | `ABORTED` | `ABORTED` | User sent a stop command |
-| `SENSOR_ERROR` | `SENSOR_ERROR` | Sensor driver unavailable; missing echoes do not cause this state |
+| `SENSOR_ERROR` | `SENSOR_ERROR` | Trigger-driver failure or persistent invalid initial measurements |
 | `TIMEOUT` | `TIMEOUT` | Total runtime limit reached |
 | `DISTANCE_LIMIT` | `DISTANCE_LIMIT` | Encoder travel limit reached |
 
@@ -135,28 +135,7 @@ STRAIGHT,state=<S>,mode=UNTILUS,elapsed=<ms>,threshold_cm=<int>,us_mm=<uint-or-I
 
 ### 3.3 Side IR Threshold: LEFTIR / RIGHTIR
 
-GT / LT
-
-新格式：`STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`，n 为整数厘米。
-例如 `STRAIGHT,LEFTIR,GT,50`（大于 50 cm 停车）、
-`STRAIGHT,RIGHTIR,LT,20`（小于 20 cm 停车）。等于阈值继续。
-左侧范围 10～50 cm，右侧 10～60 cm。旧三段格式保留为 GT。
-所有 IR 回报增加 `op=GT`／`op=LT`。
-
-LT 遇到 NEAR（小于标定下限 10 cm）也停车；FAR 继续；
-ADC／转换故障则停车并报告 SENSOR_ERROR，中止硬编码序列。
-起步前已满足条件则不驱动车轮。采样、纠偏及超时／行程限制不变。
-下文“大于阈值、FAR／ADC 故障正常 DONE”规则仅适用于 GT。
-
-New syntax: `STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`. GT stops strictly above n;
-LT stops strictly below n. Equality continues. Legacy three-field commands
-remain GT aliases. Replies include `op=GT|LT`.
-LT also stops on NEAR, continues on FAR, and stops with SENSOR_ERROR on
-ADC/conversion failure (aborting sequences). Bounds and motion limits are
-unchanged. The greater-than and failure-as-DONE descriptions below apply
-only to GT.
-
-
+Syntax: `STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`; n is integer centimetres. GT stops strictly above n, LT strictly below n; equality continues. Legacy three-field commands remain GT aliases. LEFTIR supports 10..50 cm and RIGHTIR 10..60 cm. Replies include `op=GT|LT`. LT also completes on NEAR, continues on FAR, and faults with SENSOR_ERROR on ADC/conversion error. The legacy infinity/failure-as-DONE rules below apply only to GT.
 
 ```text
 STRAIGHT,LEFTIR,GT,50
@@ -181,6 +160,8 @@ STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<de
 ```
 
 See [IR_STRAIGHT.md](IR_STRAIGHT.md) for examples and validation.
+
+Successful condition stops retain the selected-side reading in `Straight_LeftIRStopCmX10` / `Straight_RightIRStopCmX10` (0.1 cm units; `UINT32_MAX` for uninitialized/FAR/GT read failure). Each side updates independently; STOP, timeout and other failures preserve the cache. LATERAL IR mode takes its own fresh measurement.
 
 ### 3.4 Stopping and Timing
 
@@ -221,6 +202,31 @@ run after a turn failure/abort. TURN,STATUS preserves the completed turn yaw;
 HEADING,STATUS reports the reset reference. Command arrays wait for these actions
 before advancing, and UART clients must wait for DONE. See the
 [automatic turn procedure](TURN_REVERSE_DIAGNOSIS.md#automatic-actions-after-each-turn).
+
+### 4.1 Lateral Displacement: LATERAL
+
+| Request | Behaviour |
+|---|---|
+| `LATERAL,LEFT,IR` / `LATERAL,RIGHT,IR` | Save a fresh selected-side IR reading, drive forward until selected IR >50 cm, then execute two opposite turns using saved IR +10 cm |
+| `LATERAL,LEFT,n` / `LATERAL,RIGHT,n` | Direct lateral displacement of integer n cm, 1..55; no IR approach or offset |
+| `LATERAL,STATUS` | Query the composite motion, including the saved initial IR and current stage |
+| `LATERAL,STOP` | `OK`; cancel the entire active lateral motion |
+
+IR compensation is 5 cm from the IR sensor to the vehicle centreline plus half the 10 cm obstacle width (5 cm), totalling 10 cm. No vehicle-length compensation or extra straight distance is added. Validate the initial reading and final target before moving: initial IR must have VALID status and a calibrated distance 10..50 cm, and saved IR +10 must be at most 55 cm (thus usable initial IR is 10..45 cm). Initial ADC/FAR/NEAR/invalid results return `ERR,IR_MEASUREMENT_INVALID`; a final target beyond 55 cm returns `ERR,BAD_VALUE`. Invalid numeric input also returns `ERR,BAD_VALUE`; malformed fields/count return `ERR,BAD_ARGS`.
+
+IR approach uses the normal straight control and braking, with a strict acquisition-error policy: equality at 50 cm continues; a distance >50 cm or FAR completes the approach, while ADC/selected-side conversion error aborts it. STOP, 30-second timeout, 200 cm travel limit and gyro faults prevent the subsequent turns. The saved initial IR never changes when later measurements or straight-stop caches change.
+
+LEFT executes a left arc then a right arc; RIGHT executes right then left. Left radius uses the 20 cm soft limit, right radius 35 cm; TURN's left hard minimum remains 18 cm. For lateral target d, both nominal angles are `acos(1 − d/55) × 180/π`, rounded to the nearest integer degree. Each is at most 90°. Ideal forward advance during the arcs is `sqrt(110d − d²)`; IR mode also includes its preceding variable-length straight approach. Numeric `LATERAL,LEFT,20` commands two 50° turns, giving ideal rounded-angle forward advance about 42.13 cm and left displacement about 19.65 cm. Existing TURN calibration, braking and post-turn actions still apply; physical results require floor verification.
+
+Acceptance emits `OK,LATERAL`, followed by the current LATERAL status. Completion emits exactly one composite event, without internal `DONE,STRAIGHT` / `DONE,TURN` events:
+
+`LATERAL,state=<S>,dir=<LEFT|RIGHT>,source=<IR|CM>,d_cm=<one-decimal>,a=<int>,stage=<0|1|2>,ir_cm_x10=<uint>,straight_state=<S>,turn_state=<S>,start_rc=<int>`
+
+`DONE,LATERAL,state=<S>,dir=<LEFT|RIGHT>,source=<IR|CM>,d_cm=<one-decimal>,a=<int>,stage=<0|1|2>,ir_cm_x10=<uint>,straight_state=<S>,turn_state=<S>,start_rc=<int>`
+
+Stages: 0=IR approach, 1=first turn, 2=second turn. Numeric mode starts at stage 1 and reports `ir_cm_x10=0`. `ir_cm_x10` uses 0.1 cm units (300 means 30 cm); `d_cm` includes the IR offset only for source IR. States: IDLE, RUNNING, DONE, ABORTED, STRAIGHT_ERROR, TURN_ERROR, START_ERROR. Errors retain the failed stage and underlying controller state or start return code. `a` is the positive integer commanded arc angle, not measured yaw.
+
+`STOP`, `STRAIGHT,STOP`, `TURN,STOP` and `LATERAL,STOP` cancel the entire action, including between stages; no later arc starts after cancellation. Other motions are BUSY throughout all stages. Hardcoded/LOOP/FAST sequences wait for the complete action and stop on failure; their reply suppression still applies. During sequences, use global `STOP` to cancel; `LATERAL,STATUS` is allowed, while incoming subcommand STOP forms are rejected as BUSY by the sequence gate.
 
 ## 5. System, Manual Control and Queries
 
@@ -334,22 +340,24 @@ Illustrative values, not hardware measurements. `>` denotes transmitted lines an
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STRAIGHT,STATUS
-< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=20,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
-< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=20,us_mm=197,us_status=0
+< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=28,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
+< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=28,us_mm=197,us_status=0
 
-> STRAIGHT,UNTILUS,4
+> STRAIGHT,UNTILUS,193
 < ERR,BAD_VALUE
 
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STOP
 < OK
-< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=20,us_mm=INF,us_status=-1
+< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=28,us_mm=INF,us_status=-1
 ```
 
 The final example aborts before the first valid sample. RPi clients should parse mode and terminal state by field name and distinguish UNTILUS clearance from the GOCM travel target.
 
 ## 8. Configuration and Verification
+
+- v1.11 synchronizes bidirectional UNTILUS, per-side IR stop caches and both LATERAL modes, including the IR approach and 10 cm offset.
 
 - [MOTION_SETTINGS.md](MOTION_SETTINGS.md): global PWM scale, calibration/transition waits and active braking. These are compile-time settings; rebuild and flash after editing.
 - [IR_STRAIGHT.md](IR_STRAIGHT.md): LEFTIR/RIGHTIR commands and `IR_COMMAND_*` tuning.
@@ -365,7 +373,7 @@ The final example aborts before the first valid sample. RPi clients should parse
 
 `TEST_HARDCODE_COMMAND_EXECUTOR` runs an editable command list once, waits for each
 motion to succeed, and stops on errors. During this test UART accepts STOP, PING,
-STATUS, STRAIGHT,STATUS, TURN,STATUS and HEADING,STATUS, plus STRAIGHT,TRACE while stopped. SEQ,LOG replays the saved run after completion/abort and returns ERR,BUSY until the sequence finishes. WAIT,<ms> is array-only. See
+STATUS, STRAIGHT,STATUS, TURN,STATUS, LATERAL,STATUS and HEADING,STATUS, plus STRAIGHT,TRACE while stopped. SEQ,LOG replays the saved run after completion/abort and returns ERR,BUSY until the sequence finishes. WAIT,<ms> is array-only. See
 [HARDCODE_COMMAND_EXECUTOR.md](HARDCODE_COMMAND_EXECUTOR.md).
 
 `SEQ,LOG` reads a 48 KiB volatile RAM log of the latest sequence. It includes

@@ -22,7 +22,7 @@ typedef struct {
 } lateral_status_t;
 void Lateral_Init(void);
 /* Numeric mode supplies the final displacement in 0.1 cm. IR mode measures
- * the selected sensor at command start, adds obstacle/vehicle half-widths,
+ * the selected sensor at command start, adds obstacle half-width and IR-to-centre offset,
  * then drives until selected IR > 50 cm before starting the two arcs. Returns -5 for
  * unavailable IR, -2 for invalid range, -3 for busy; other errors from TURN. */
 int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10);

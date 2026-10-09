@@ -102,7 +102,8 @@ static const char *const loop_once_commands[] =
 static const char *const fast_left1_commands[] =
 {
     "LATERAL,LEFT,20",
-    "LATERAL,RIGHT,IR",
+    "STRAIGHT,RIGHTIR,GT,50",
+    "LATERAL,RIGHT,20",
     "STRAIGHT,UNTILUS,35",
 
     // "TURN,LEFT,R=35,A=60",
@@ -128,7 +129,8 @@ static const char *const fast_left2_commands[] =
 static const char *const fast_right1_commands[] =
 {
     "LATERAL,RIGHT,20",
-    "LATERAL,LEFT,IR",
+    "STRAIGHT,LEFTIR,GT,50",
+    "LATERAL,LEFT,20",
     "STRAIGHT,UNTILUS,35",
 
     // "TURN,RIGHT,R=35,A=60",

@@ -1,7 +1,7 @@
 # MDP21 STM32 ↔ RPi 通信协议（中文版）
 
-**版本**：v1.10  
-**日期**：2026-09-23  
+**版本**：v1.11  
+**日期**：2026-10-09  
 **对端**：Raspberry Pi / PuTTY  
 **实现依据**：[command_interface.c](../Core/Src/assessment/command_interface.c)
 
@@ -39,6 +39,7 @@
 | `NO_DEVICE` | 所需设备初始化失败 |
 | `UNKNOWN_CMD` | 空闲时收到未知命令；运动中未知命令返回 `BUSY` |
 | `RX_LINE_OVERFLOW` | 正文超过接收缓冲区容量 |
+| `IR_MEASUREMENT_INVALID` | LATERAL 起始对应侧 IR 不可用或超出标定范围 |
 
 `TIMEOUT`、`SENSOR_ERROR`、`DISTANCE_LIMIT` 是运动终态，出现在 `DONE`/状态查询中，不是本接口独立发送的 `ERR` 原因。
 
@@ -76,15 +77,14 @@ STRAIGHT,UNTILUS,<cm>
 OK,mode=UNTILUS,threshold_cm=<cm>
 ```
 
-`cm` 为 **5～200 的正整数**，表示车头保险杠到障碍物的距离阈值，不是行驶距离。固件会在内部加上 8 cm，因为超声波探头位于保险杠后方；控制器实际比较的是探头到障碍物的距离。仅向前行驶。首次取得有效且新鲜的读数 **严格小于** 内部阈值时停车；等于阈值不完成。
+`cm` 为保险杠到障碍物距离的整数阈值。串口解析器先加 8 cm 安装偏移，再调用控制器，因此内部探头到障碍物的目标为 `cm + 8`。控制器接受内部阈值 5～200 cm，当前解析器实际接受输入 −3～192 cm。`OK` 回显输入值，完成事件和状态查询回报内部阈值。例如输入 20，实际比较目标为 280 mm，完成／查询中的 `threshold_cm=28`。
 
-- 先等待启动确认；连续两次有效读数低于阈值时，直接完成而不启动电机。连续两次有效读数高于阈值时开始前进。连续三次未知读数也会开始前进，并按无限远处理。
-- PB15=TRIG、PC8=ECHO（经过 5V→3.3V 分压），与工作示例 `mdp21_8_ultrasonic` 一致。TIM8_CH3 在 1 MHz、ARR=65535 下双边沿捕获；驱动启动输入捕获中断并读取 CCR3。
-- 触发间隔至少 60 ms，整次测量超时为 60 ms。2+10 µs 触发脉冲由 DWT 计时，不重置捕获定时器或 HAL 时基。采集逻辑按工作示例执行：仅将大于 25000 µs 的脉冲判为超量程，不再添加最小脉宽或边沿阶段过滤。
-- 无回波、无效/零读数或超过 200 ms 的旧读数按无限远处理，保持巡航 PWM 并继续测距。取消 500 ms 启动失败及读数过期停车；STOP、30 秒超时和 200 cm 行程上限仍有效。
-- 基础 PWM：kickstart 4000，巡航 3500，读数不大于“阈值 + 25 cm”时降至 2600，叠加原有轮速同步修正。
-- 总运行上限 30 秒；任一轮编码器测得行程达到 200 cm 时停止。阈值与行程限制是不同概念。
-- 不使用 GOCM 的行程补偿。停止时先短暂将每个电机的两个输入同时拉高进行刹车，然后将 PWM 归零并使舵机回中；最终静止距离可能小于触发停车时的读数。
+- 起步前保持停车，等待连续两次有效、新鲜且位于内部目标同一侧的读数。大于目标则前进，小于目标则倒车；起始连续两次恰好等于目标时直接完成。读数从目标一侧跳到另一侧会重新计数。
+- 起步后固定方向：前进时连续两次读数严格小于目标后停车；倒车时连续两次严格大于目标后停车。运动中等于目标继续；不满足条件或无效读数会清零停止确认计数。
+- 起始连续三次无效、零值或过期样本时，保持停车并以 SENSOR_ERROR 结束；触发驱动失败也会报错。行驶期间无回波不会确认越过目标，继续测量，STOP、超时和行程限制仍有效。
+- PB15=TRIG，PC8=ECHO 经 5V→3.3V 分压；TIM8_CH3 在 1 MHz 下双边沿捕获。触发间隔至少 60 ms，测量超时 60 ms，有效样本年龄不得超过 200 ms。
+- 基础 PWM：起步 4000、巡航 3500、接近目标 2600。前进和倒车均在距离内部目标不足或等于 25 cm 时降速，速度切换具有 5 cm 回差，并保留轮速同步。以上数值尚未乘全局 PWM 比例。
+- 总运行上限 30 秒，任一轮编码器行程达到 200 cm 时停止。不使用 GOCM 行程补偿；成功停止仍执行刹车和舵机回中，最终实际距离可能与触发读数不同。
 
 完成/故障事件的字段顺序：
 
@@ -94,9 +94,9 @@ DONE,STRAIGHT,mode=UNTILUS,state=<S>,reason=<R>,threshold_cm=<int>,us_mm=<uint-o
 
 | `state` | `reason` | 含义 |
 |---|---|---|
-| `DONE` | `US_THRESHOLD` | 有效新鲜测距严格低于阈值 |
+| `DONE` | `US_THRESHOLD` | 确认按运动方向越过目标，或起始确认等于目标 |
 | `ABORTED` | `ABORTED` | 用户发送停止命令 |
-| `SENSOR_ERROR` | `SENSOR_ERROR` | 传感器驱动不可用；无回波不会触发此状态 |
+| `SENSOR_ERROR` | `SENSOR_ERROR` | 触发驱动失败或起始持续无效测量 |
 | `TIMEOUT` | `TIMEOUT` | 达到总时间上限 |
 | `DISTANCE_LIMIT` | `DISTANCE_LIMIT` | 达到编码器行程上限 |
 
@@ -111,28 +111,7 @@ STRAIGHT,state=<S>,mode=UNTILUS,elapsed=<ms>,threshold_cm=<int>,us_mm=<uint-or-I
 
 ### 3.3 侧面 IR 阈值 LEFTIR / RIGHTIR
 
-GT / LT
-
-新格式：`STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`，n 为整数厘米。
-例如 `STRAIGHT,LEFTIR,GT,50`（大于 50 cm 停车）、
-`STRAIGHT,RIGHTIR,LT,20`（小于 20 cm 停车）。等于阈值继续。
-左侧范围 10～50 cm，右侧 10～60 cm。旧三段格式保留为 GT。
-所有 IR 回报增加 `op=GT`／`op=LT`。
-
-LT 遇到 NEAR（小于标定下限 10 cm）也停车；FAR 继续；
-ADC／转换故障则停车并报告 SENSOR_ERROR，中止硬编码序列。
-起步前已满足条件则不驱动车轮。采样、纠偏及超时／行程限制不变。
-下文“大于阈值、FAR／ADC 故障正常 DONE”规则仅适用于 GT。
-
-New syntax: `STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`. GT stops strictly above n;
-LT stops strictly below n. Equality continues. Legacy three-field commands
-remain GT aliases. Replies include `op=GT|LT`.
-LT also stops on NEAR, continues on FAR, and stops with SENSOR_ERROR on
-ADC/conversion failure (aborting sequences). Bounds and motion limits are
-unchanged. The greater-than and failure-as-DONE descriptions below apply
-only to GT.
-
-
+格式为 `STRAIGHT,LEFTIR/RIGHTIR,GT/LT,n`，n 为整数厘米。GT 严格大于阈值停车，LT 严格小于阈值停车，等于阈值继续；旧三段格式保留为 GT。左侧支持 10～50 cm，右侧支持 10～60 cm，回复包含 `op=GT|LT`。LT 遇到 NEAR 也正常完成，FAR 继续；ADC／转换错误以 SENSOR_ERROR 停止并中止序列。下文无限远及故障正常 DONE 规则仅适用于 GT。
 
 ```text
 STRAIGHT,LEFTIR,GT,50
@@ -158,10 +137,12 @@ STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<de
 
 数值距离保留一位小数；`FAR` 不区分超量程和 ADC 失败。详见 [IR_STRAIGHT.md](IR_STRAIGHT.md)。
 
+条件满足并正常停止时，将对应侧读数保存到 `Straight_LeftIRStopCmX10`／`Straight_RightIRStopCmX10`，单位为 0.1 cm；未缓存、FAR 或 GT 读取失败用 `UINT32_MAX` 表示。左右独立更新，STOP、超时和其他故障保留旧值。LATERAL 的 IR 模式自行现场测量。
+
 ### 3.4 停止与时序
 
 - `STRAIGHT,STOP` → `OK,aborted=<0|1>`；若中止运行中的直行（含测距等待），随后发送一次 `state=ABORTED` 完成事件。
-- `STOP` → `OK`；停止电机、舵机回中，并中止正在运行的直行或转弯，随后发送对应完成事件。
+- `STOP` → `OK`；停止电机、舵机回中，并中止正在运行的直行、转弯或侧移，随后发送对应完成事件。
 - 首次运动可能在回复 `OK` 前进行陀螺仪初始化和约 5.5 秒静止校准；后续是否重新校准、等待由 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 控制，详见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。首次初始化阶段仍是阻塞的。
 - 运动控制按至少 20 ms 间隔步进；UART 收发仍可能延迟主循环。运动期间跳过 OLED 命令刷新，独立陀螺轮询暂停，避免重复积分。没有硬实时停车时延保证。
 
@@ -177,6 +158,31 @@ STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<de
 | `TURN,STATUS` | `TURN,state=<S>,dir=<LEFT\|RIGHT>,elapsed=<ms>,r_cm=<int>,target_deg=<int>,yaw=<f>` |
 
 LEFT/RIGHT 选择转向侧，A 正值前进、负值倒车。R 无额外配置上限，但必须能解析为 int32。终态文本包括 `DONE`、`ABORTED`、`TIMEOUT`、`WRONG_SIGN`、`NO_TURN`、`BAD_CONFIG`、`NO_IMU`（后两项为接口可识别状态）。当前转弯参数以 [turn_tuning.h](../Core/Inc/control/turn_tuning.h) 和 [turn_control.c](../Core/Src/control/turn_control.c) 为准。
+
+### 4.1 侧向平移 LATERAL
+
+| 请求 | 行为 |
+|---|---|
+| `LATERAL,LEFT,IR`／`LATERAL,RIGHT,IR` | 保存对应侧现场 IR，前进至该侧 IR >50 cm，再按起始 IR +10 cm 执行两次反向转弯 |
+| `LATERAL,LEFT,n`／`LATERAL,RIGHT,n` | 直接按整数 n cm 侧移，范围 1～55；无 IR 直行阶段及补偿 |
+| `LATERAL,STATUS` | 查询组合动作、起始 IR 和当前阶段 |
+| `LATERAL,STOP` | 返回 `OK`，取消整个侧移动作 |
+
+IR 补偿为探头到车体中线 5 cm，加上 10 cm 障碍宽的一半 5 cm，总计 10 cm。不补偿车长，也不增加额外直行距离。起步前检查初始测量及最终目标：初始 IR 必须为 VALID 且在标定范围 10～50 cm 内，起始 IR +10 不得超过 55 cm，因此可用起始距离为 10～45 cm。初始 ADC 失败、FAR、NEAR 或无效距离返回 `ERR,IR_MEASUREMENT_INVALID`；最终目标超过 55 cm 返回 `ERR,BAD_VALUE`。数值参数无效返回 `ERR,BAD_VALUE`，字段格式或数量错误返回 `ERR,BAD_ARGS`。
+
+前进阶段复用直行控制和刹车，采用严格读取故障策略：等于 50 cm 继续，大于 50 cm 或 FAR 完成直行；ADC／对应侧转换错误会中止。STOP、30 秒超时、200 cm 行程上限及陀螺仪故障均阻止后续转弯。后续实时测量及直行停止缓存的变化不会覆盖本次起始 IR。
+
+LEFT 先左转后右转，RIGHT 先右转后左转。左转采用 20 cm 软限制，右转半径 35 cm；普通 TURN 的左转硬极限保留 18 cm。目标侧移 d 的两段名义角度均为 `acos(1 − d/55) × 180/π`，四舍五入为整数度，每段最多 90°。两段圆弧理论前移为 `sqrt(110d − d²)`，IR 模式还包含之前长度由测量决定的直行。例如数值指令 `LATERAL,LEFT,20` 执行两次 50° 转弯，对应理想前移约 42.13 cm、左移约 19.65 cm。仍应用已有转弯校准、刹车和转弯结束动作，实际效果需地面验证。
+
+接受后发送 `OK,LATERAL`，再发送当前 LATERAL 状态。整个动作结束时只发送一个组合事件，内部直行及转弯不单独发送 `DONE,STRAIGHT`／`DONE,TURN`：
+
+`LATERAL,state=<S>,dir=<LEFT|RIGHT>,source=<IR|CM>,d_cm=<一位小数>,a=<整数>,stage=<0|1|2>,ir_cm_x10=<无符号整数>,straight_state=<S>,turn_state=<S>,start_rc=<整数>`
+
+`DONE,LATERAL,state=<S>,dir=<LEFT|RIGHT>,source=<IR|CM>,d_cm=<一位小数>,a=<整数>,stage=<0|1|2>,ir_cm_x10=<无符号整数>,straight_state=<S>,turn_state=<S>,start_rc=<整数>`
+
+阶段 0 为 IR 前进，1 为第一次转弯，2 为第二次转弯；数值模式从阶段 1 开始，`ir_cm_x10=0`。起始 `ir_cm_x10` 单位为 0.1 cm，300 表示 30 cm；`d_cm` 仅在 IR 模式包含补偿。状态包括 IDLE、RUNNING、DONE、ABORTED、STRAIGHT_ERROR、TURN_ERROR、START_ERROR。失败保留失败阶段以及底层控制器状态或启动返回码；`a` 为正整数指令角度，与实测 yaw 分别记录。
+
+`STOP`、`STRAIGHT,STOP`、`TURN,STOP`、`LATERAL,STOP` 都取消整个侧移动作，阶段间取消后不会启动后续转弯。所有阶段保持运动互斥，其他运动返回 BUSY。硬编码／LOOP／FAST 序列等待整个动作完成，失败时停止，原有回复屏蔽规则仍有效。序列执行期间应使用全局 `STOP` 取消；可查询 `LATERAL,STATUS`，传入各子命令 STOP 形式会被序列入口拒绝为 BUSY。
 
 ## 5. 系统、手动控制与查询
 
@@ -283,7 +289,7 @@ DONE,LOOP,state=<reason>,index=<1..4>,count=4
 如果用户用 `STOP` 取消：`DONE,LOOP,state=USER_STOP,index=<current>,count=4`。
 
 `LOOP,ONCE` 执行期间，UART 仍接受 `STOP`、`PING`、`STATUS`、
-`STRAIGHT,STATUS`、`TURN,STATUS` 和 `HEADING,STATUS`。其他传入命令返回 `ERR,BUSY`。
+`STRAIGHT,STATUS`、`TURN,STATUS`、`LATERAL,STATUS` 和 `HEADING,STATUS`。其他传入命令返回 `ERR,BUSY`。
 
 ## 7. UNTILUS 交互示例
 
@@ -293,22 +299,24 @@ DONE,LOOP,state=<reason>,index=<1..4>,count=4
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STRAIGHT,STATUS
-< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=20,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
-< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=20,us_mm=197,us_status=0
+< STRAIGHT,state=RUNNING,mode=UNTILUS,elapsed=420,threshold_cm=28,us_mm=320,us_status=0,us_age_ms=12,l_cm=+8.300,r_cm=+8.280,diff_cm=+0.020,yaw=+0.100
+< DONE,STRAIGHT,mode=UNTILUS,state=DONE,reason=US_THRESHOLD,threshold_cm=28,us_mm=197,us_status=0
 
-> STRAIGHT,UNTILUS,4
+> STRAIGHT,UNTILUS,193
 < ERR,BAD_VALUE
 
 > STRAIGHT,UNTILUS,20
 < OK,mode=UNTILUS,threshold_cm=20
 > STOP
 < OK
-< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=20,us_mm=INF,us_status=-1
+< DONE,STRAIGHT,mode=UNTILUS,state=ABORTED,reason=ABORTED,threshold_cm=28,us_mm=INF,us_status=-1
 ```
 
 最后一个示例在取得首个有效样本前中止。RPi 应按字段名解析模式与终态，避免把 UNTILUS 的阈值当作 GOCM 的行程目标。
 
 ## 8. 配置与验证
+
+- v1.11 同步双向 UNTILUS、左右 IR 停止缓存，以及两种 LATERAL 模式、IR 前进阶段和 10 cm 补偿。
 
 - [MOTION_SETTINGS.md](MOTION_SETTINGS.md)：全局 PWM 比例、校准与指令衔接等待开关、主动制动。修改后须重新编译和烧录，不是 UART 动态参数。
 - [IR_STRAIGHT.md](IR_STRAIGHT.md)：LEFTIR／RIGHTIR 指令及 `IR_COMMAND_*` 参数。
@@ -322,6 +330,6 @@ DONE,LOOP,state=<reason>,index=<1..4>,count=4
 
 ## 硬编码命令数组测试
 
-`TEST_HARDCODE_COMMAND_EXECUTOR` 将命令数组执行一次，等待每个运动成功后再继续，遇到错误停止。此模式的 UART 仅接受 STOP、PING、STATUS、STRAIGHT,STATUS、TURN,STATUS 和 HEADING,STATUS。WAIT,<ms> 仅可用于数组。详见 [HARDCODE_COMMAND_EXECUTOR.md](HARDCODE_COMMAND_EXECUTOR.md)。
+`TEST_HARDCODE_COMMAND_EXECUTOR` 将命令数组执行一次，等待每个运动成功后再继续，遇到错误停止。此模式的 UART 仅接受 STOP、PING、STATUS、STRAIGHT,STATUS、TURN,STATUS、LATERAL,STATUS 和 HEADING,STATUS。WAIT,<ms> 仅可用于数组。详见 [HARDCODE_COMMAND_EXECUTOR.md](HARDCODE_COMMAND_EXECUTOR.md)。
 
 `us_mm=INF` 表示未知/无限远，`us_status` 仍为非零。上位机解析此字段时须同时支持数值和字符串 INF。
