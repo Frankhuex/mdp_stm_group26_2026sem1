@@ -46,6 +46,8 @@ static straight_ir_comparison_t sc_ir_comparison;
 static int32_t sc_ir_threshold_cm;
 static uint32_t sc_ir_cm_x10;
 static uint32_t sc_ir_last_tick;
+uint32_t Straight_LeftIRStopCmX10 = UINT32_MAX;
+uint32_t Straight_RightIRStopCmX10 = UINT32_MAX;
 static uint8_t sc_us_moving;
 static int32_t sc_us_threshold_cm;
 static ultrasonic_sample_t sc_us_sample;
@@ -171,7 +173,13 @@ static void StopWithHeadingSamples(void)
 
 static void FinishIR(straight_state_t state)
 {
-    if (state == STRAIGHT_DONE) StopWithHeadingSamples();
+    if (state == STRAIGHT_DONE)
+    {
+        /* Keep the condition-triggering sample before braking. */
+        if (sc_ir_mode == 1U) Straight_LeftIRStopCmX10 = sc_ir_cm_x10;
+        else if (sc_ir_mode == 2U) Straight_RightIRStopCmX10 = sc_ir_cm_x10;
+        StopWithHeadingSamples();
+    }
     else
     {
         RobotHW_MotorStop();
@@ -320,6 +328,8 @@ static uint16_t ComputeSteeringUs(float dt_sec)
 
 void Straight_Init(void)
 {
+    Straight_LeftIRStopCmX10 = UINT32_MAX;
+    Straight_RightIRStopCmX10 = UINT32_MAX;
     sc_fixed_steer_us = 0U;
     TraceReset();
     MotionHeading_Reset();

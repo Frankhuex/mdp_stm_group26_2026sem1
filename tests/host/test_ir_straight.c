@@ -28,6 +28,7 @@ void RobotHW_MotorBrakeRelease(void)
 }
 void RobotHW_ServoCenter(void) { mock_servo = SERVO_CENTER_US; }
 void RobotHW_ServoSetUs(uint32_t x) { mock_servo = x; }
+void RobotHW_ServoSetUsTakeup(uint32_t x) { mock_servo = x; }
 uint32_t RobotHW_ServoGetUs(void) { return mock_servo; }
 uint32_t RobotHW_ServoCenterUs(void) { return SERVO_CENTER_US; }
 int RobotHW_PrepareMotionSensors(void) { mock_yaw = 0.0f; return mock_prepare_rc; }
@@ -82,6 +83,31 @@ static void reset(void)
 static void step(void) { tick+=40;Straight_Step(); }
 int main(void)
 {
+    reset();
+    assert(Straight_LeftIRStopCmX10 == UINT32_MAX && Straight_RightIRStopCmX10 == UINT32_MAX);
+    ir.left_cm_x10 = 501;
+    assert(Straight_StartUntilIRCm(50, 0, STRAIGHT_IR_GT) == 0);
+    assert(Straight_LeftIRStopCmX10 == 501 && Straight_RightIRStopCmX10 == UINT32_MAX);
+    assert(Straight_StartUntilIRCm(20, 1, STRAIGHT_IR_LT) == 0);
+    assert(Straight_LeftIRStopCmX10 == 501 && Straight_RightIRStopCmX10 == UINT32_MAX);
+    ir.right_cm_x10 = 199; step();
+    assert(Straight_State() == STRAIGHT_DONE);
+    assert(Straight_LeftIRStopCmX10 == 501 && Straight_RightIRStopCmX10 == 199);
+    ir.right_cm_x10 = 500;
+    assert(Straight_StartUntilIRCm(20, 1, STRAIGHT_IR_LT) == 0);
+    adc_fail = 1; step();
+    assert(Straight_State() == STRAIGHT_SENSOR_ERROR && Straight_RightIRStopCmX10 == 199);
+    adc_fail = 0;
+    assert(Straight_StartCm(20) == 0); Straight_Stop();
+    assert(Straight_LeftIRStopCmX10 == 501 && Straight_RightIRStopCmX10 == 199);
+    assert(Straight_StartUntilIRCm(50, 1, STRAIGHT_IR_GT) == 0); Straight_Stop();
+    assert(Straight_RightIRStopCmX10 == 199);
+    assert(Straight_StartUntilIRCm(50, 1, STRAIGHT_IR_GT) == 0);
+    tick += 30000; Straight_Step();
+    assert(Straight_State() == STRAIGHT_TIMEOUT && Straight_RightIRStopCmX10 == 199);
+    ir.right_status = IR_RANGE_FAR;
+    assert(Straight_StartUntilIRCm(50, 1, STRAIGHT_IR_GT) == 0);
+    assert(Straight_RightIRStopCmX10 == UINT32_MAX && Straight_LeftIRStopCmX10 == 501);
     reset();assert(Straight_StartUntilIRGreaterCm(50,0)==0);
     assert(Straight_State()==STRAIGHT_RUNNING && drives==1); /* equality */
     ir.right_status=IR_RANGE_FAR;step();assert(Straight_State()==STRAIGHT_RUNNING);

@@ -36,6 +36,11 @@ straight_ir_comparison_t Straight_IRComparison(void);
 int Straight_StartUntilIRGreaterCm(int32_t threshold_cm, uint8_t side);
 /* Returns 0=not IR, 1=LEFTIR, 2=RIGHTIR. UINT32_MAX distance means FAR. */
 int Straight_IRStatus(int32_t *threshold_cm, uint32_t *cm_x10);
+/* Last condition-triggered stop distance per side, in 0.1 cm (237 = 23.7 cm).
+ * Updated only for that side on IR DONE; retained across later commands.
+ * UINT32_MAX = no cached stop since Init, FAR, or GT read failure. */
+extern uint32_t Straight_LeftIRStopCmX10;
+extern uint32_t Straight_RightIRStopCmX10;
 /* Returns 1 for UNTILUS mode. Unavailable clearance = UINT32_MAX (infinity).
  * Nonzero status means invalid/stale; missing echoes do not stop motion. */
 int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,
