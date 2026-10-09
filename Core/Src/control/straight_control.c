@@ -655,46 +655,34 @@ static void StepUltrasonic(void)
         sc_us_sequence = sample.sequence;
         sc_us_sample = sample;
 
-        if (sample.status == 0 && sample.distance_mm > 0U)
+        if (sample.status == 0 && sample.distance_mm > 0U &&
+            now - sample.timestamp_ms <= US_SAMPLE_MAX_AGE_MS)
         {
+            uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
             sc_us_fail_count = 0U;
-
-            if (sample.distance_mm < (uint32_t)sc_us_threshold_cm * 10U)
+            if (!sc_us_moving)
             {
-                sc_us_start_confirm_count = 0U;
-                if (!sc_us_moving)
+                /* Confirm the starting side; equality completes without driving. */
+                int8_t direction = sample.distance_mm > target_mm ? 1 :
+                                   sample.distance_mm < target_mm ? -1 : 0;
+                if (sc_dir != direction) sc_us_start_confirm_count = 0U;
+                sc_dir = direction;
+                if (sc_us_start_confirm_count < UINT8_MAX) sc_us_start_confirm_count++;
+                if (sc_us_start_confirm_count >= US_START_CONFIRM_SAMPLES)
                 {
-                    if (sc_us_stop_confirm_count < UINT8_MAX)
-                        sc_us_stop_confirm_count++;
-                    if (sc_us_stop_confirm_count >= US_START_CONFIRM_SAMPLES)
-                    {
-                        FinishUltrasonic(STRAIGHT_DONE);
-                        return;
-                    }
-                }
-                else
-                {
-                    if (sc_us_stop_confirm_count < UINT8_MAX)
-                        sc_us_stop_confirm_count++;
-                    if (sc_us_stop_confirm_count >= US_STOP_CONFIRM_SAMPLES)
-                    {
-                        FinishUltrasonic(STRAIGHT_DONE);
-                        return;
-                    }
+                    if (sc_dir == 0) { FinishUltrasonic(STRAIGHT_DONE); return; }
+                    StartUltrasonicDrive(now);
                 }
             }
             else
             {
-                sc_us_stop_confirm_count = 0U;
-                if (!sc_us_moving)
-                {
-                    if (sc_us_start_confirm_count < UINT8_MAX)
-                        sc_us_start_confirm_count++;
-                    if (sc_us_start_confirm_count >= US_START_CONFIRM_SAMPLES)
-                    {
-                        StartUltrasonicDrive(now);
-                    }
-                }
+                /* Lock direction for the command; stop only after strict crossing. */
+                uint8_t crossed = sc_dir > 0 ? sample.distance_mm < target_mm :
+                                              sample.distance_mm > target_mm;
+                if (!crossed) sc_us_stop_confirm_count = 0U;
+                else if (sc_us_stop_confirm_count < UINT8_MAX) sc_us_stop_confirm_count++;
+                if (sc_us_stop_confirm_count >= US_STOP_CONFIRM_SAMPLES)
+                { FinishUltrasonic(STRAIGHT_DONE); return; }
             }
         }
         else
@@ -702,10 +690,9 @@ static void StepUltrasonic(void)
             sc_us_stop_confirm_count = 0U;
             sc_us_start_confirm_count = 0U;
             if (sc_us_fail_count < UINT8_MAX) sc_us_fail_count++;
+            /* No initial valid distance means no direction can be selected. */
             if (!sc_us_moving && sc_us_fail_count >= US_START_UNKNOWN_SAMPLES)
-            {
-                StartUltrasonicDrive(now);
-            }
+            { FinishUltrasonic(STRAIGHT_SENSOR_ERROR); return; }
         }
     }
     /* Keep sampling after a brief no-echo result; -3 here only means
@@ -917,18 +904,20 @@ static void Straight_StepInternal(void)
     if (sc_until_us)
     {
         uint32_t clearance = UltrasonicClearanceMm(now);
-        uint32_t slow_boundary = (uint32_t)sc_us_threshold_cm * 10U
-                               + US_SLOW_MARGIN_MM;
+        uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
         uint32_t target_pwm;
 
         /* Hysteresis prevents noisy readings from repeatedly switching speed.
          * If an echo is briefly lost after slowing down, remain conservative. */
         if (clearance != UINT32_MAX)
         {
-            if (!sc_us_approach_mode && clearance <= slow_boundary)
+            uint32_t remaining_mm = sc_dir > 0
+                ? (clearance > target_mm ? clearance - target_mm : 0U)
+                : (clearance < target_mm ? target_mm - clearance : 0U);
+            if (!sc_us_approach_mode && remaining_mm <= US_SLOW_MARGIN_MM)
                 sc_us_approach_mode = 1U;
             else if (sc_us_approach_mode &&
-                     clearance > slow_boundary + US_SPEED_HYSTERESIS_MM)
+                     remaining_mm > US_SLOW_MARGIN_MM + US_SPEED_HYSTERESIS_MM)
                 sc_us_approach_mode = 0U;
         }
 

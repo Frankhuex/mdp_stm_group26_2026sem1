@@ -59,3 +59,14 @@ Host validation: compile `tests/host/test_lateral.c` together with
 `Core/Src/control/lateral_control.c`, using `Core/Inc` headers and the math
 library. The test simulates TURN and checks geometry, side selection, live IR
 measurement/offset, limits, busy handling, STOP and turn/start failures.
+
+## Bidirectional UNTILUS
+
+`STRAIGHT,UNTILUS,n` waits for consecutive fresh valid ultrasound measurements.
+If distance is above n cm it drives forward until consecutive measurements are
+strictly below n; if below n it reverses until consecutive measurements are
+strictly above n. Direction stays fixed after starting. Initial confirmed
+exact equality completes without driving. Approach speed reduction applies
+in either direction. Initial persistent missing/invalid readings produce
+SENSOR_ERROR without moving; invalid readings during motion cannot confirm a
+crossing. Existing STOP, timeout and maximum travel limits remain active.

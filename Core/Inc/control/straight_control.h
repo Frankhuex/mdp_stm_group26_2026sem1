@@ -26,6 +26,9 @@ int Straight_StartCm(int32_t target_cm);
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us);
 /* 0 = normal gyro steering, otherwise the last accepted fixed pulse. */
 uint32_t Straight_FixedSteeringUs(void);
+/* Fresh confirmed distance selects forward (>target) or reverse (<target).
+ * Stops after confirmed strict crossing; initial equality completes stationary.
+ * Missing initial measurements fail without driving. */
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm);
 typedef enum { STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT } straight_ir_comparison_t;
 int Straight_StartUntilIRCm(int32_t threshold_cm, uint8_t side,

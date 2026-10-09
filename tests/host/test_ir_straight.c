@@ -81,8 +81,53 @@ static void reset(void)
     ir=zero;ir.left_cm_x10=500;ir.right_cm_x10=500;
 }
 static void step(void) { tick+=40;Straight_Step(); }
+static void echo(uint32_t mm, int result)
+{
+    mock_ultrasonic.distance_mm = mm;
+    mock_ultrasonic.status = result;
+    mock_ultrasonic.timestamp_ms = tick + 40U;
+    mock_ultrasonic.sequence++;
+    step();
+}
+static void test_untilus_bidirectional(void)
+{
+    for (int direction = -1; direction <= 1; direction += 2)
+    {
+        reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+        assert(drives == 0);
+        uint32_t start = direction > 0 ? 400U : 100U;
+        uint32_t crossed = direction > 0 ? 199U : 201U;
+        echo(start, 0); assert(drives == 0);
+        echo(start, 0); assert(drives > 0 && mock_direction == direction);
+        echo(200U, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(0U, -1); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(start, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(crossed, 0); assert(Straight_State() == STRAIGHT_RUNNING);
+        echo(crossed, 0); assert(Straight_State() == STRAIGHT_DONE);
+    }
+    reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+    echo(100U, 0); echo(400U, 0); assert(drives == 0);
+    echo(400U, 0); assert(mock_direction == 1 && drives > 0);
+    Straight_Stop(); assert(Straight_State() == STRAIGHT_ABORTED);
+    reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+    echo(200U, 0); echo(200U, 0);
+    assert(Straight_State() == STRAIGHT_DONE && drives == 0);
+    reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+    for (int i = 0; i < 10 && Straight_State() == STRAIGHT_RUNNING; i++) echo(0, -1);
+    assert(Straight_State() == STRAIGHT_SENSOR_ERROR && drives == 0);
+    reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+    echo(100, 0); echo(100, 0); Straight_Stop();
+    assert(Straight_State() == STRAIGHT_ABORTED && mock_direction == -1);
+    reset(); assert(Straight_StartUntilUltrasonicCm(20) == 0);
+    echo(100, 0); echo(100, 0); tick += 30000; Straight_Step();
+    assert(Straight_State() == STRAIGHT_TIMEOUT);
+    puts("PASS: UNTILUS forward/reverse, strict crossing, confirmation/noise, unknown initial distance, equality, STOP, timeout");
+}
 int main(void)
 {
+    test_untilus_bidirectional();
     reset();
     assert(Straight_LeftIRStopCmX10 == UINT32_MAX && Straight_RightIRStopCmX10 == UINT32_MAX);
     ir.left_cm_x10 = 501;
