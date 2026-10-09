@@ -6,18 +6,21 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
 ../Core/Src/control/approach_control.c \
+../Core/Src/control/lateral_control.c \
 ../Core/Src/control/motion_heading.c \
 ../Core/Src/control/straight_control.c \
 ../Core/Src/control/turn_control.c 
 
 OBJS += \
 ./Core/Src/control/approach_control.o \
+./Core/Src/control/lateral_control.o \
 ./Core/Src/control/motion_heading.o \
 ./Core/Src/control/straight_control.o \
 ./Core/Src/control/turn_control.o 
 
 C_DEPS += \
 ./Core/Src/control/approach_control.d \
+./Core/Src/control/lateral_control.d \
 ./Core/Src/control/motion_heading.d \
 ./Core/Src/control/straight_control.d \
 ./Core/Src/control/turn_control.d 

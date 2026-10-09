@@ -3,6 +3,7 @@
 #include "control/straight_control.h"
 #include "control/straight_tuning.h"   /* STRAIGHT_FORWARD_TRIM_US for calibration */
 #include "control/turn_control.h"
+#include "control/lateral_control.h"
 #include "control/motion_heading.h"
 #include "drivers/robot_hw.h"
 #include "drivers/oled.h"
@@ -100,11 +101,15 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_left1_commands[] =
 {
-    "TURN,LEFT,R=35,A=60",
-    "TURN,RIGHT,R=35,A=120",
-    "TURN,LEFT,R=35,A=60",
-    "STRAIGHT,GOCM,-33",
+    "LATERAL,LEFT,20",
+    "LATERAL,RIGHT,IR",
     "STRAIGHT,UNTILUS,35",
+
+    // "TURN,LEFT,R=35,A=60",
+    // "TURN,RIGHT,R=35,A=120",
+    // "TURN,LEFT,R=35,A=60",
+    // "STRAIGHT,GOCM,-33",
+    // "STRAIGHT,UNTILUS,35",
 };
 static const char *const fast_left2_commands[] =
 {
@@ -125,11 +130,15 @@ static const char *const fast_left2_commands[] =
 };
 static const char *const fast_right1_commands[] =
 {
-    "TURN,RIGHT,R=35,A=60",
-    "TURN,LEFT,R=35,A=120",
-    "TURN,RIGHT,R=35,A=60",
-    "STRAIGHT,GOCM,-33",
+    "LATERAL,RIGHT,20",
+    "LATERAL,LEFT,IR",
     "STRAIGHT,UNTILUS,35",
+
+    // "TURN,RIGHT,R=35,A=60",
+    // "TURN,LEFT,R=35,A=120",
+    // "TURN,RIGHT,R=35,A=60",
+    // "STRAIGHT,GOCM,-33",
+    // "STRAIGHT,UNTILUS,35",
 };
 static const char *const fast_right2_commands[] =
 {
@@ -154,7 +163,8 @@ typedef enum
     PENDING_MOTION_NONE = 0,
     PENDING_MOTION_STRAIGHT,
     PENDING_MOTION_UNTILUS,
-    PENDING_MOTION_TURN
+    PENDING_MOTION_TURN,
+    PENDING_MOTION_LATERAL
 } pending_motion_t;
 
 static const char *CommandInterface_RunSequenceRows(const char *const commands[],
@@ -316,7 +326,8 @@ static void FormatFloat3(char *buf, size_t size, float value)
 
 static uint8_t AnyMotionRunning(void)
 {
-    return (Straight_State() == STRAIGHT_RUNNING ||
+    return (Lateral_State() == LATERAL_RUNNING ||
+            Straight_State() == STRAIGHT_RUNNING ||
             Turn_State() == TURN_RUNNING);
 }
 
@@ -384,11 +395,43 @@ static int SendIRStatus(uint8_t done)
     return 1;
 }
 
+static const char *LateralStateText(lateral_state_t state)
+{
+    switch (state) {
+        case LATERAL_IDLE: return "IDLE";
+        case LATERAL_RUNNING: return "RUNNING";
+        case LATERAL_DONE: return "DONE";
+        case LATERAL_ABORTED: return "ABORTED";
+        case LATERAL_TURN_ERROR: return "TURN_ERROR";
+        case LATERAL_START_ERROR: return "START_ERROR";
+        default: return "UNKNOWN";
+    }
+}
+static void SendLateralStatus(uint8_t done)
+{
+    lateral_status_t st;
+    char msg[192];
+    Lateral_Status(&st);
+    snprintf(msg, sizeof(msg),
+        "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,turn_state=%s,start_rc=%d\r\n",
+        done ? "DONE," : "", LateralStateText(st.state), st.side ? "RIGHT" : "LEFT",
+        st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
+        (unsigned long)(st.distance_cm_x10 % 10U), (long)st.angle_deg,
+        (unsigned)st.stage, TurnStateText(st.turn_state), st.start_rc);
+    Cmd_Send(msg);
+}
+
 static void NotifyPendingMotionDone(void)
 {
     char msg[192];
 
-    if (pending_motion == PENDING_MOTION_UNTILUS)
+    if (pending_motion == PENDING_MOTION_LATERAL)
+    {
+        if (Lateral_State() == LATERAL_RUNNING) return;
+        if (!pending_motion_done_suppressed) SendLateralStatus(1U);
+        ClearPendingMotion();
+    }
+    else if (pending_motion == PENDING_MOTION_UNTILUS)
     {
         straight_state_t state = Straight_State();
         int32_t threshold;
@@ -648,7 +691,12 @@ static void SequenceLog_CaptureAfter(uint32_t index, pending_motion_t motion)
     sequence_log_capture_only = 1U;
     snprintf(msg, sizeof(msg), "LOG,AFTER,index=%lu\r\n", (unsigned long)index);
     Cmd_Send(msg);
-    if (motion == PENDING_MOTION_TURN)
+    if (motion == PENDING_MOTION_LATERAL)
+    {
+        SendLateralStatus(0U);
+        HandleTurnStatus();
+    }
+    else if (motion == PENDING_MOTION_TURN)
     {
         char target[20], brake_yaw[20], brake_rate[20];
         float yaw, rate;
@@ -1129,6 +1177,7 @@ static void DispatchLine(char *line)
     }
     else if (strcmp(tok0, "STOP") == 0 && tok1 == NULL)
     {
+        Lateral_Stop();
         Straight_Stop();
         Turn_Stop();
         MotionHeading_Reset();
@@ -1274,6 +1323,40 @@ static void DispatchLine(char *line)
             Cmd_Reject("ERR,BAD_ARGS");
         }
     }
+    else if (strcmp(tok0, "LATERAL") == 0)
+    {
+        if (tok1 && strcmp(tok1, "STATUS") == 0 && tok2 == NULL)
+            SendLateralStatus(0U);
+        else if (tok1 && strcmp(tok1, "STOP") == 0 && tok2 == NULL)
+        {
+            Lateral_Stop();
+            if (!AnyMotionRunning()) MotionHeading_Reset();
+            Cmd_SendLine("OK");
+        }
+        else if (tok1 && (strcmp(tok1, "LEFT") == 0 || strcmp(tok1, "RIGHT") == 0) &&
+                 tok2 && tok3 == NULL)
+        {
+            int32_t cm = 0;
+            uint8_t from_ir = strcmp(tok2, "IR") == 0;
+            if (!from_ir && (!ParseIntStrict(tok2, &cm) || cm <= 0 ||
+                cm > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM))
+            { Cmd_Reject("ERR,BAD_VALUE"); return; }
+            if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+            int rc = Lateral_Start(strcmp(tok1, "RIGHT") == 0, from_ir, (uint32_t)cm * 10U);
+            if (rc == 0)
+            {
+                pending_motion = PENDING_MOTION_LATERAL;
+                Cmd_SendLine("OK,LATERAL");
+                SendLateralStatus(0U);
+            }
+            else if (rc == -5) Cmd_Reject("ERR,IR_MEASUREMENT_INVALID");
+            else if (rc == -2) Cmd_Reject("ERR,BAD_VALUE");
+            else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
+            else if (rc == -4) Cmd_Reject("ERR,NOT_STILL");
+            else Cmd_Reject("ERR,BUSY");
+        }
+        else Cmd_Reject("ERR,BAD_ARGS");
+    }
     else if (strcmp(tok0, "TURN") == 0)
     {
         if (tok1 != NULL &&
@@ -1291,7 +1374,7 @@ static void DispatchLine(char *line)
                 Cmd_Reject("ERR,BAD_ARGS");
                 return;
             }
-            if (Straight_State() == STRAIGHT_RUNNING)
+            if (AnyMotionRunning())
             {
                 Cmd_Reject("ERR,BUSY");
                 return;
@@ -1317,6 +1400,7 @@ static void DispatchLine(char *line)
         else if (tok1 != NULL && strcmp(tok1, "STOP") == 0 && tok2 == NULL)
         {
             uint8_t aborted = (Turn_State() == TURN_RUNNING) ? 1U : 0U;
+            Lateral_Stop();
             Turn_Stop();
             if (!AnyMotionRunning()) MotionHeading_Reset();
             {
@@ -1616,6 +1700,7 @@ static void DispatchReceivedLine(char *line)
             sequence_cancelled = 1U;
         else if (strcmp(line, "PING") != 0 && strcmp(line, "STATUS") != 0 &&
                  strcmp(line, "STRAIGHT,STATUS") != 0 && strcmp(line, "TURN,STATUS") != 0 &&
+                 strcmp(line, "LATERAL,STATUS") != 0 &&
                  strcmp(line, "STRAIGHT,TRACE") != 0 &&
                  strcmp(line, "SEQ,LOG") != 0 &&
                  strcmp(line, "HEADING,STATUS") != 0)
@@ -1678,6 +1763,7 @@ static void CommandInterface_Init(void)
     RobotHW_StartMotionPeripherals();
     Straight_Init();
     Turn_Init();
+    Lateral_Init();
     /* Normal UART and hardcoded runs hold each straight's starting direction.
      * Do not carry prior yaw error into the next straight or turn by default.
      * Gyro measurement, local straight PID and gyro-controlled turns remain on. */
@@ -1709,6 +1795,7 @@ static void CommandInterface_Poll(void)
     uint8_t rx_byte;
     Straight_Step();
     Turn_Step();
+    Lateral_Step();
     GyroPollingStep();
     NotifyPendingMotionDone();
     while (RxRingPop(&rx_byte)) ProcessRxByte(rx_byte);   /* drain the ISR ring */
@@ -1722,6 +1809,7 @@ void CommandInterface_Run(void)
 
 static void Sequence_StopMotors(void)
 {
+    Lateral_Stop();
     Straight_Stop();
     Turn_Stop();
     RobotHW_MotorStop();
@@ -1834,6 +1922,8 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
                 failure = StraightStateText(Straight_State());
             else if (motion == PENDING_MOTION_TURN && Turn_State() != TURN_DONE)
                 failure = TurnStateText(Turn_State());
+            else if (motion == PENDING_MOTION_LATERAL && Lateral_State() != LATERAL_DONE)
+                failure = LateralStateText(Lateral_State());
             /* Includes motions completed immediately in their Start function. */
             NotifyPendingMotionDone();
             if (motion != PENDING_MOTION_NONE)

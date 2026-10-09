@@ -15,3 +15,47 @@ Assessment mapping:
 - A.5 obstacle navigation: not finalized yet; IR/ultrasonic calibration should be completed first.
 
 Do not add duplicate motor, encoder, gyro, straight, or turn implementations here. Assessment code should call the reusable modules.
+
+## Lateral displacement commands
+
+| Command | Final lateral displacement |
+| --- | --- |
+| `LATERAL,LEFT,IR` | Fresh left IR measurement + 15 cm |
+| `LATERAL,RIGHT,IR` | Fresh right IR measurement + 15 cm |
+| `LATERAL,LEFT,n` | n cm left; integer n from 1 to 55 |
+| `LATERAL,RIGHT,n` | n cm right; integer n from 1 to 55 |
+
+`LATERAL,STATUS` reports the source, target distance, rounded angle, stage,
+turn result and start error. `STOP` or `LATERAL,STOP` cancels the whole action;
+`TURN,STOP` also cancels an active lateral action. Hardcoded sequences wait
+for both arcs and stop the sequence on either arc's failure.
+
+The controller executes two forward arcs of equal angle and opposite steering:
+LEFT runs left then right, RIGHT runs right then left. It reuses TURN's normal
+calibration, braking and post-turn actions. The left soft radius is 20 cm and
+the right minimum radius is 35 cm; the left hard minimum remains 18 cm.
+All dimensions are defined in `Core/Inc/drivers/robot_tuning.h`.
+
+With R = 20 + 35 = 55 cm, angle = acos(1 - d/R), converted to degrees and
+rounded to the nearest integer for the existing TURN interface. Each arc is
+at most 90 degrees, so d must be positive and at most 55 cm. The ideal forward
+advance is sqrt(2*R*d - d*d); the manoeuvre needs room ahead as well as sideways.
+For d = 30 cm the command angle is 63 degrees; IR = 30 cm adds 15 cm and uses
+80 degrees. Integer angle rounding and real turn calibration affect the actual
+displacement; verify on the floor.
+
+IR mode reads `IRSensor_ReadDistance` once at command start and uses the
+selected side's calibrated distance for both arcs. Only `IR_RANGE_VALID`
+readings in the calibrated 10..50 cm range are accepted. The original
+STRAIGHT condition-stop caches remain independent and are not used here.
+The 15 cm is half the 10 cm obstacle width plus half the 20 cm vehicle width.
+A measured IR distance above 40 cm produces a displacement above 55 cm and
+returns `ERR,BAD_VALUE`. ADC failure, FAR, NEAR or an invalid selected-side
+reading returns `ERR,IR_MEASUREMENT_INVALID` without starting a turn.
+Completion emits one `DONE,LATERAL` for the composite, including the failing
+stage when applicable; individual arcs do not emit `DONE,TURN`.
+
+Host validation: compile `tests/host/test_lateral.c` together with
+`Core/Src/control/lateral_control.c`, using `Core/Inc` headers and the math
+library. The test simulates TURN and checks geometry, side selection, live IR
+measurement/offset, limits, busy handling, STOP and turn/start failures.

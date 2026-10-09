@@ -26,7 +26,13 @@
 #define SERVO_BACKLASH_US               120U
 #define SERVO_TAKEUP_SETTLE_MS          120U
 #define CMD_WHEELBASE_CM                18.0f
-#define CMD_LEFT_MIN_RADIUS_CM          18
+#define CMD_LEFT_MIN_RADIUS_CM          18  /* hard steering limit */
+#define CMD_LEFT_SOFT_MIN_RADIUS_CM     20  /* normal lateral manoeuvres */
+#define LATERAL_OBSTACLE_WIDTH_CM       10U
+#define LATERAL_VEHICLE_WIDTH_CM        20U
+#if CMD_LEFT_SOFT_MIN_RADIUS_CM < CMD_LEFT_MIN_RADIUS_CM
+#error "Left soft radius must respect the hard limit"
+#endif
 #define CMD_RIGHT_MIN_RADIUS_CM         35
 
 /* Keep existing encoder calibration unchanged; all telemetry/controllers share it. */

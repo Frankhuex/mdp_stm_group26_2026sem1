@@ -2,6 +2,7 @@
 SOURCES := \
   Core/Src/assessment/command_interface.c \
   Core/Src/control/approach_control.c \
+  Core/Src/control/lateral_control.c \
   Core/Src/control/motion_heading.c \
   Core/Src/control/straight_control.c \
   Core/Src/control/turn_control.c \
