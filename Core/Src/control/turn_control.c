@@ -96,7 +96,7 @@ extern UART_HandleTypeDef huart3;
 #define SERVO_SETTLE_MS              500U
 #define PLACE_DELAY_MS               10000U
 #define CONTROL_DELAY_MS             10U
-#define POST_STOP_SETTLE_MS          500U
+#define POST_STOP_SETTLE_MS          150U
 #define TURN_TIMEOUT_MS              30000U
 
 /* Safety checks. */
@@ -931,7 +931,6 @@ int Turn_StartRadiusAngle(int32_t radius_cm, int32_t angle_deg, int8_t turn_dir)
 
     if (MOTION_PREPARE_STOP_ENABLE)
     {
-        Motor_Stop();
         Servo_SetPulse(SERVO_CENTER_US);
     }
     prep_rc = RobotHW_PrepareMotionSensors();
@@ -971,8 +970,7 @@ int Turn_StartRadiusAngle(int32_t radius_cm, int32_t angle_deg, int8_t turn_dir)
     tc_phase = 0U;
     tc_state = TURN_RUNNING;
 
-    if (MOTION_PREPARE_STOP_ENABLE) Motor_Stop();
-    else RobotHW_MotorBrakeRelease(); /* Zero drive outputs during steering wait. */
+    RobotHW_MotorBrakeRelease(); /* Preparation already stopped the wheels. */
     tc_servo_wait_ms = Command_ServoWaitMs(RobotHW_ServoGetUs(), (uint32_t)pulse);
     Servo_SetPulse((uint32_t)pulse);
     /* Start timing after preparation stops and the actual servo command. */

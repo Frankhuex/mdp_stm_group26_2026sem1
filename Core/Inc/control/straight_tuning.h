@@ -89,7 +89,7 @@
 #define CONTROL_PERIOD_MS               20U
 #define GYRO_IIR_ALPHA                  0.10f
 /* Allow an inherited route-heading correction to settle before drive. */
-#define STRAIGHT_HEADING_STEER_SETTLE_MS 100U
+#define STRAIGHT_HEADING_STEER_SETTLE_MS 60U
 
 /* Gyro yaw -> steering servo PID (gyro rate is the derivative term). */
 #if STRAIGHT_CENTER_CALIBRATION_ACTIVE
@@ -172,7 +172,7 @@
 #define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
 /* All active IR comparisons use low speed, including startup and gated entry. */
-#define IR_COMMAND_DETECT_PWM            1800U
+#define IR_COMMAND_DETECT_PWM            1900U
 #define IR_COMMAND_TIMEOUT_MS           30000U
 #define IR_COMMAND_MAX_TRAVEL_CM         200U
 

@@ -9,7 +9,7 @@ static void check_wait(int side, int gear, uint32_t previous) {
  assert(Turn_StartRadiusAngle(side < 0 ? 20 : 35, gear * 90, side) == 0);
  uint32_t commanded = mock_servo;
  assert(tc_servo_wait_ms == Command_ServoWaitMs(previous, commanded));
- assert(tc_servo_wait_ms >= 80 && tc_servo_wait_ms <= 500);
+ assert(tc_servo_wait_ms >= TURN_SERVO_WAIT_MIN_MS && tc_servo_wait_ms <= TURN_SERVO_WAIT_FULL_SPAN_MS);
  uint32_t start = tc_phase_tick;
  for (uint32_t elapsed = 10; elapsed < tc_servo_wait_ms; elapsed += 10) {
   tick = start + elapsed; Turn_Step();
@@ -49,10 +49,10 @@ static void check_turn_end_policies(void) {
 }
 int main(void) {
  check_turn_end_policies();
- assert(Command_ServoWaitMs(1725,1725) == 80);
- assert(Command_ServoWaitMs(1000,2600) == 500);
- assert(Command_ServoWaitMs(2600,1000) == 500);
- assert(Command_ServoWaitMs(0,1725) == 500);
+ assert(Command_ServoWaitMs(1725,1725) == TURN_SERVO_WAIT_MIN_MS);
+ assert(Command_ServoWaitMs(1000,2600) == TURN_SERVO_WAIT_FULL_SPAN_MS);
+ assert(Command_ServoWaitMs(2600,1000) == TURN_SERVO_WAIT_FULL_SPAN_MS);
+ assert(Command_ServoWaitMs(0,1725) == TURN_SERVO_WAIT_FULL_SPAN_MS);
  assert(Command_ServoWaitMs(1725,1800) < Command_ServoWaitMs(1725,2600));
  for (int side = -1; side <= 1; side += 2)
   for (int gear = -1; gear <= 1; gear += 2) check_wait(side,gear,1725);

@@ -285,9 +285,9 @@ static void test_ir_low_speed(void)
                     int rc=gated ? Straight_StartCmThenIR(dir*10,side,op,30)
                                  : Straight_StartUntilIRDirectionCm(30,side,op,dir);
                     assert(rc==0);
-                    if (gated) { assert(last_left_pwm>1800); encoder_delta=744; step(); encoder_delta=0; }
-                    assert(last_left_pwm==1800 && last_right_pwm==1800);
-                    for (int i=0; i<5; i++) { step(); assert(last_left_pwm==1800 && last_right_pwm==1800); }
+                    if (gated) { assert(last_left_pwm>1900); encoder_delta=744; step(); encoder_delta=0; }
+                    assert(last_left_pwm==1900 && last_right_pwm==1900);
+                    for (int i=0; i<5; i++) { step(); assert(last_left_pwm==1900 && last_right_pwm==1900); }
                     assert(Straight_State()==STRAIGHT_RUNNING); Straight_Stop();
                 }
     puts("PASS: all IR gears/sides/operators use low speed at startup and GOCM gate");

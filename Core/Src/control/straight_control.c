@@ -717,7 +717,6 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
         return -2;
     MotionHeading_Prepare();
     sc_braking = 0U;
-    if (MOTION_PREPARE_STOP_ENABLE) RobotHW_MotorStop();
     RobotHW_ServoSetUs(StraightCenterUs(direction));
     if (UltrasonicSensor_Init() != 0) { MotionHeading_Degrade(); return -1; }
     prep_rc = RobotHW_PrepareMotionSensors();

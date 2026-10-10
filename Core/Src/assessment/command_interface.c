@@ -65,7 +65,7 @@ static int RxRingPop(uint8_t *b)
 
 #define CMD_GYRO_ALPHA         0.35f
 #define CMD_GYRO_DEADBAND_DPS  0.20f
-#define CMD_LOOP_COMMAND_GAP_MS 300U
+#define CMD_LOOP_COMMAND_GAP_MS 0U
 
 /* Retain one sequence without an attached UART receiver. Never overwrite the
  * beginning on overflow: report lost bytes when the user dumps the log.

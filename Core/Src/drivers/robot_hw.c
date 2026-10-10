@@ -240,7 +240,7 @@ int32_t RobotHW_MotorGetRightRequested(void)
     return motor_right_requested;
 }
 
-static uint8_t RobotHW_WaitForStill(void)
+static uint8_t RobotHW_WaitForStill(uint32_t required_ms, uint32_t brake_min_ms)
 {
     RobotHW_EncoderSnapshot previous = RobotHW_EncoderSnapshotRead();
     uint32_t start = HAL_GetTick();
@@ -263,7 +263,7 @@ static uint8_t RobotHW_WaitForStill(void)
             right_delta <= MOTION_STILL_MAX_DELTA_COUNTS)
         {
             stable_ms += MOTION_STILL_SAMPLE_MS;
-            if (stable_ms >= MOTION_STILL_REQUIRED_MS) return 1U;
+            if (stable_ms >= required_ms && HAL_GetTick() - start >= brake_min_ms) return 1U;
         }
         else
         {
@@ -277,10 +277,20 @@ static uint8_t RobotHW_WaitForStill(void)
 int RobotHW_PrepareMotionSensors(void)
 {
     uint8_t need_calibration = GYRO_RECALIBRATE_BEFORE_EACH_COMMAND || !RobotHW_GyroHasOffset();
-    if (need_calibration || MOTION_PREPARE_STOP_ENABLE || MOTION_STILL_CHECK_ENABLE)
-        RobotHW_MotorStop();
-    if (need_calibration || MOTION_STILL_CHECK_ENABLE)
-        if (!RobotHW_WaitForStill()) return -4;
+    uint8_t check_still = need_calibration || MOTION_STILL_CHECK_ENABLE;
+    if (check_still || MOTION_PREPARE_STOP_ENABLE)
+    {
+        /* Observe encoders during the one preparation brake, rather than after it. */
+        RobotHW_MotorBrakeBegin();
+        uint8_t ready = 1U;
+        if (check_still)
+            ready = RobotHW_WaitForStill(need_calibration ? MOTION_CALIB_STILL_REQUIRED_MS
+                                                         : MOTION_STILL_REQUIRED_MS,
+                                         MOTOR_BRAKE_PULSE_MS);
+        else HAL_Delay(MOTOR_BRAKE_PULSE_MS);
+        RobotHW_MotorBrakeRelease();
+        if (!ready) return -4;
+    }
 
     if (!RobotHW_GyroIsInitialized() && !RobotHW_GyroInit()) return -1;
 

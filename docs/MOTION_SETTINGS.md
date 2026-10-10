@@ -25,7 +25,7 @@ are unchanged. Actual speed is not proportional to PWM; saturation is possible.
 
 ## 独立控制开关 / Independent control switches
 
-以下开关位于 `robot_tuning.h`，默认均为 `0U`，保持拆分前的快速模式。
+以下开关位于 `robot_tuning.h`，当前仅重复陀螺仪零偏刷新为 `0U`，其余开关为 `1U`；实际配置以源码为准。
 `1U` 启用对应行为，`0U` 关闭；修改后重新编译烧录。
 
 | 开关 / Switch | 控制内容 / Behavior |
@@ -33,8 +33,8 @@ are unchanged. Actual speed is not proportional to PWM; saturation is possible.
 | `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` | 每段运动刷新零偏 / Refresh gyro bias before each motion |
 | `MOTION_PREPARE_STOP_ENABLE` | 额外准备制动，转弯准备回中 / Additional preparation stops and turn centring |
 | `MOTION_STILL_CHECK_ENABLE` | 额外静止检查 / Additional stationary check |
-| `TURN_POST_STOP_SETTLE_ENABLE` | 转弯制动后等 500 ms / Post-turn 500 ms settling |
-| `TURN_RIGHT_RETURN_ENABLE` | 右转结束 1500 us 保持 500 ms，再回中保持 500 ms / RIGHT steering holds |
+| `TURN_POST_STOP_SETTLE_ENABLE` | 转弯制动后等 150 ms / Post-turn 150 ms settling |
+| `TURN_RIGHT_RETURN_ENABLE` | 右转结束 1500 us 保持 100 ms，再回中保持 100 ms / RIGHT steering holds |
 | `TURN_LEFT_HEADING_OFF_ENABLE` | 左转成功后自动 HEADING,OFF / LEFT automatically disables heading |
 | `TURN_END_HEADING_RESET_ENABLE` | 转弯成功后清空航向历史 / Reset heading history after successful turns |
 | `SEQUENCE_COMMAND_GAP_ENABLE` | 执行序列配置的 gap_ms / Apply configured sequence gaps |
@@ -93,14 +93,19 @@ TURN_*_STEER_SCALE 仍限制在 (0, 1]，不受目标角度比例调整影响。
 ### 转弯起步舵机等待独立控制 / Independent turn-start steering wait
 
 转弯指令起步前始终等待，GYRO_RECALIBRATE_BEFORE_EACH_COMMAND=0 也保留。
-按下发 PWM 变化量估算，当前最低 80 ms，全端点行程 500 ms，参数为
+按下发 PWM 变化量估算，当前最低 60 ms，全端点行程 400 ms，参数为
 TURN_SERVO_WAIT_MIN_MS 和 TURN_SERVO_WAIT_FULL_SPAN_MS。无实际舵角反馈，
 需要实车负载验证；旧固定 500 ms 仍用于独立最小半径诊断。
 Command turns always wait before driving, including with gyro recalibration off.
-The open-loop PWM-travel estimate ranges from 80 to 500 ms; configurable in
+The open-loop PWM-travel estimate ranges from 60 to 400 ms; configurable in
 turn_tuning.h. It is not a physical servo-position measurement. The standalone
 minimum-radius diagnostic retains its own fixed 500 ms wait.
 
 UNTILUS 末段速度与制动参数位于 `straight_tuning.h`：最后 20 cm 使用 `US_FINAL_APPROACH_PWM=1800`，成功制动最少保持 `MOTOR_BRAKE_PULSE_MS=150` ms；编码器连续 `US_BRAKE_QUIET_MS=60` ms 无变化后释放，最长 `US_BRAKE_MAX_MS=600` ms。达到上限仍有编码器运动则报 STALL。IR、GOCM 与转弯制动参数保持原值。
 
 UNTILUS final approach and brake settings are in `straight_tuning.h`: 1800 PWM within 200 mm after startup, at least 150 ms braking, 60 ms of encoder quiet before release, and a 600 ms maximum. Continued encoder motion at the maximum reports STALL.
+
+
+当前衔接优化：运动准备制动仅一次，保持至少 150 ms，同时检查编码器静止；普通运动要求连续静止 100 ms，首次或重复零偏校准仍要求 250 ms。静止检查最多等待 1000 ms，失败释放制动并返回 NOT_STILL。转弯后的固定稳定等待为 150 ms，右转两段定位各 100 ms；舵机回差定位各 60 ms，转弯到位估算为 60～400 ms，继承航向的直行舵机等待为 60 ms。LOOP 与 FAST 额外指令间隔均为 0；显式 WAIT 保留。IR 检测基础 PWM 为 1900，采样间隔保持 40 ms；目标停车制动仍至少 150 ms。首次校准样本数量与等待、UNTILUS 静止释放规则保持原配置。缩短后的舵机等待与定位仍需实车验证。
+
+Motion preparation now uses one >=150 ms brake with concurrent encoder checks (100 ms quiet normally, 250 ms before bias calibration). Turn settling is 150 ms; right return holds are 100 ms each; backlash holds are 60 ms each. Estimated turn steering wait is 60..400 ms and inherited straight steering wait is 60 ms. LOOP/FAST extra gaps are zero. IR uses base PWM 1900 and 40 ms sampling; target braking, explicit WAIT and calibration remain. Servo timings require hardware verification.

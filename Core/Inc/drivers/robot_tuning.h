@@ -24,7 +24,7 @@
  * the straight-ahead angle is repeatable after any turn. Set to the observed
  * hysteresis (~120us here). Does NOT apply to the per-tick gyro-PID updates. */
 #define SERVO_BACKLASH_US               120U
-#define SERVO_TAKEUP_SETTLE_MS          80U
+#define SERVO_TAKEUP_SETTLE_MS          60U
 #define CMD_WHEELBASE_CM                18.0f
 #define CMD_LEFT_MIN_RADIUS_CM          18  /* hard steering limit */
 #define CMD_LEFT_SOFT_MIN_RADIUS_CM     20  /* normal lateral manoeuvres */
@@ -75,7 +75,7 @@
 #error "MOTION_STILL_CHECK_ENABLE must be 0 or 1"
 #endif
 
-/* Wait POST_STOP_SETTLE_MS after turn braking. */
+/* Wait POST_STOP_SETTLE_MS (150 ms) after turn braking. */
 #ifndef TURN_POST_STOP_SETTLE_ENABLE
 #define TURN_POST_STOP_SETTLE_ENABLE 1U
 #endif
@@ -117,7 +117,9 @@
 
 /* Stationary calibration checks and optional short gyro-Z bias refresh. */
 #define MOTION_STILL_SAMPLE_MS           10U
-#define MOTION_STILL_REQUIRED_MS         250U
+#define MOTION_STILL_REQUIRED_MS         100U
+/* Keep a longer stationary window for gyro bias calibration. */
+#define MOTION_CALIB_STILL_REQUIRED_MS   250U
 #define MOTION_STILL_TIMEOUT_MS          1000U
 #define MOTION_STILL_MAX_DELTA_COUNTS    0
 #define MOTOR_BRAKE_PULSE_MS             150U

@@ -84,10 +84,10 @@ OK,mode=UNTILUS,threshold_cm=<cm>,dir=<FORWARD|BACKWARD>
 - `STRAIGHT,UNTILUS,n` 默认前进；`STRAIGHT,FORWARD,UNTILUS,n` 显式前进至距离小于目标；`STRAIGHT,BACKWARD,UNTILUS,n` 显式后退至距离大于目标。全程固定指定方向，不根据初始距离自动换向。命令与回报的方向名称一致。
 - 初始距离已满足指定条件时（前进：严格小于目标；倒车：严格大于目标），连续两次新鲜有效且相差不超过 50 mm 的读数确认后静止完成。相等时仍按指定方向执行，其余有效起始读数确认两次后起步。
 - 行驶保留提前刹车策略：前进在目标 + 提前量、后退在目标 − 提前量处确认，两次有效读数相差不超过 50 mm。两方向配置提前量均为 5 cm；初始距离已知时最多取初始误差的一半，无回波起步使用配置提前量，最终距离需实车验证。
-- 无效、零值、过期或无回波均不判到达，也不直接报 SENSOR_ERROR 停车；按指定方向以基础 PWM 1800 低速起步／继续，并持续测量。恢复有效读数后继续正常控制和确认。无回波可能有多种原因，恢复无法保证；初始化／触发驱动失败与陀螺仪故障仍报错。STOP、堵转保护、30 秒超时与 200 cm 行程限制继续生效。
+- 无效、零值、过期或无回波均不判到达，也不直接报 SENSOR_ERROR 停车；按指定方向以基础 PWM 1900 低速起步／继续，并持续测量。恢复有效读数后继续正常控制和确认。无回波可能有多种原因，恢复无法保证；初始化／触发驱动失败与陀螺仪故障仍报错。STOP、堵转保护、30 秒超时与 200 cm 行程限制继续生效。
 - PB15=TRIG，PC8=ECHO 经 5V→3.3V 分压；TIM8_CH3 在 1 MHz 下双边沿捕获。触发间隔至少 60 ms，测量超时 60 ms，有效样本年龄不得超过 200 ms。
 - 基础 PWM：远距离起步 4000、巡航 3500、接近目标 2400。起始距目标不超过 35 cm 时使用 2600 起步，两轮开始运动后即可结束起步阶段；接近目标时立即降速，加速仍限制变化率。前进和倒车均在距离内部目标不足或等于 35 cm 时降速，速度切换具有 5 cm 回差，并保留轮速同步。以上数值尚未乘全局 PWM 比例。
-- 最后 20 cm 在两轮起步确认后降至基础 PWM 1800，此时回波丢失不会加速。所有停车阈值（包括越过实际目标）均需连续两次有效读数确认，且两次相差不超过 50 mm；突变读数重新计数，无效读数清零。UNTILUS 成功制动至少保持 150 ms，并等待两轮编码器连续 60 ms 无变化，最长 600 ms；达到上限时车轮仍在运动则返回 STALL。
+- 最后 20 cm 在两轮起步确认后降至基础 PWM 1900，此时回波丢失不会加速。所有停车阈值（包括越过实际目标）均需连续两次有效读数确认，且两次相差不超过 50 mm；突变读数重新计数，无效读数清零。UNTILUS 成功制动至少保持 150 ms，并等待两轮编码器连续 60 ms 无变化，最长 600 ms；达到上限时车轮仍在运动则返回 STALL。
 - 总运行上限 30 秒，任一轮编码器行程达到 200 cm 时停止。不使用 GOCM 行程补偿；成功停止仍执行刹车和舵机回中，最终实际距离可能与触发读数不同。
 
 完成/故障事件的字段顺序：
@@ -134,7 +134,7 @@ DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT|RISING|FALLING>,state=<S>,threshol
 - 阈值为整数厘米：LEFTIR 支持 10～50，RIGHTIR 支持 10～60，与当前标定表一致。
 - `FAR`、ADC 读取失败和转换错误均按无限远处理，正常回报 `state=DONE,ir_cm=FAR`，不作为 IR 传感器故障。
 - 起步前先采样，已满足条件则直接完成而不驱动车轮。行驶时约每 40 ms 采样一次，一次满足即可停车。
-- 所有启用 IR 比较的阶段从起步起统一使用基础 PWM 1800，涵盖前后方向、左右探头、GT/LT/RISING/FALLING，以及有无 GOCM／LATERAL 的组合；仍使用全局 PWM 比例和直行方向／左右轮同步控制。GOCM 前段沿用原速度曲线，到达 IR 检测切换点立即降速。
+- 所有启用 IR 比较的阶段从起步起统一使用基础 PWM 1900，涵盖前后方向、左右探头、GT/LT/RISING/FALLING，以及有无 GOCM／LATERAL 的组合；仍使用全局 PWM 比例和直行方向／左右轮同步控制。GOCM 前段沿用原速度曲线，到达 IR 检测切换点立即降速。
 - STOP 返回 ABORTED；30 秒超时返回 TIMEOUT；任一轮行程达到 200 cm 返回 DISTANCE_LIMIT；陀螺仪故障仍可返回 SENSOR_ERROR。这些非成功终态会中止序列。
 - 硬编码执行器收到正常 DONE 后进入下一行，包含 FAR／ADC 失败触发的正常完成。
 
@@ -172,7 +172,7 @@ GT/LT 起始条件已满足时，电机保持停车，间隔 40 ms 进行第二�
 
 ## 4. 转弯命令
 
-指令转弯的起步舵机等待始终启用，独立于 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`。下发目标舵角后电机保持零输出，估算到位时间结束才起步。当前估算为 `80 + ceil(420 × abs(目标PWM − 上次PWM) / 1600)` ms，范围 80～500 ms，上次指令超出配置端点时等待 500 ms；参数位于 `turn_tuning.h`。估算依据为指令 PWM 变化量，没有实际舵角反馈，需带负载验证。小幅调整等待短，大幅调整等待长；此等待采用非阻塞状态，可响应 STOP。
+指令转弯的起步舵机等待始终启用，独立于 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`。下发目标舵角后电机保持零输出，估算到位时间结束才起步。当前估算为 `60 + ceil(340 × abs(目标PWM − 上次PWM) / 1600)` ms，范围 60～400 ms，上次指令超出配置端点时等待 400 ms；参数位于 `turn_tuning.h`。估算依据为指令 PWM 变化量，没有实际舵角反馈，需带负载验证。小幅调整等待短，大幅调整等待长；此等待采用非阻塞状态，可响应 STOP。
 
 | 请求 | 参数 / 回复 |
 |---|---|
@@ -185,7 +185,7 @@ GT/LT 起始条件已满足时，电机保持停车，间隔 40 ms 进行第二�
 
 LEFT/RIGHT 选择转向侧，A 正值前进、负值倒车。R 无额外配置上限，但必须能解析为 int32。终态文本包括 `DONE`、`ABORTED`、`TIMEOUT`、`WRONG_SIGN`、`NO_TURN`、`BAD_CONFIG`、`NO_IMU`（后两项为接口可识别状态）。当前转弯参数以 [turn_tuning.h](../Core/Inc/control/turn_tuning.h) 和 [turn_control.c](../Core/Src/control/turn_control.c) 为准。
 
-转弯结束采用独立开关，默认均为 0：`TURN_POST_STOP_SETTLE_ENABLE` 控制制动后 500 ms 等待；`TURN_RIGHT_RETURN_ENABLE` 控制右转结束两段 500 ms 舵机保持；`TURN_LEFT_HEADING_OFF_ENABLE` 控制左转成功后自动关闭航向；`TURN_END_HEADING_RESET_ENABLE` 独立控制成功转弯后的航向历史重置。前进和倒车转弯均适用。`GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 只决定重复刷新零偏，校准所需停车和静止确认始终执行。目标制动与起步舵机估算等待始终保留。完整开关见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。
+转弯结束采用独立开关，当前均开启：`TURN_POST_STOP_SETTLE_ENABLE` 控制制动后 150 ms 等待；`TURN_RIGHT_RETURN_ENABLE` 控制右转结束两段 100 ms 舵机保持；`TURN_LEFT_HEADING_OFF_ENABLE` 控制左转成功后自动关闭航向；`TURN_END_HEADING_RESET_ENABLE` 独立控制成功转弯后的航向历史重置。前进和倒车转弯均适用。`GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 只决定重复刷新零偏，校准所需停车和静止确认始终执行。目标制动与起步舵机估算等待始终保留。完整开关见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。
 
 ### 4.1 侧向平移 LATERAL
 

@@ -53,7 +53,7 @@ the driver's numeric distance saturates at 50 cm.
 
 Samples are taken about every 40 ms. Two consecutive qualifying samples are
 required. Tuning is in `Core/Inc/control/straight_tuning.h` (`IR_COMMAND_*`).
-Every active IR comparison uses base PWM 1800, including startup and entry
+Every active IR comparison uses base PWM 1900, including startup and entry
 from GOCM, subject to global motor scaling and normal wheel synchronization. Maximum travel is 200 cm on either
 wheel and timeout is 30 seconds; these return DISTANCE_LIMIT/TIMEOUT, not DONE.
 

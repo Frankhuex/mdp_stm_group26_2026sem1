@@ -26,8 +26,8 @@
  * Open-loop estimate from PWM travel: minimum allowance plus proportional
  * time up to full-span travel. No physical servo position feedback exists.
  * Initial conservative values; remeasure with the actual loaded steering. */
-#define TURN_SERVO_WAIT_MIN_MS           80U
-#define TURN_SERVO_WAIT_FULL_SPAN_MS     500U
+#define TURN_SERVO_WAIT_MIN_MS           60U
+#define TURN_SERVO_WAIT_FULL_SPAN_MS     400U
 #if TURN_SERVO_WAIT_MIN_MS == 0 || TURN_SERVO_WAIT_FULL_SPAN_MS < TURN_SERVO_WAIT_MIN_MS
 #error "Invalid turn servo wait timing"
 #endif
@@ -36,12 +36,12 @@
 #define TURN_BRAKE_HOLD_MS              150U
 
 /* After a successful RIGHT command, reproduce the user's manual return:
- * 1500 us for 500 ms, then the shared centre (1725 us) for 500 ms. Drive PWM is
+ * 1500 us for 100 ms, then the shared centre (1725 us) for 100 ms. Drive PWM is
  * already zero. Each steering action clears heading history, like STEER,US.
  * Successful LEFT commands instead apply HEADING,OFF before DONE. */
 #define TURN_RIGHT_RECENTER_US          1500U
-#define TURN_RIGHT_RECENTER_HOLD_MS      150U
-#define TURN_RIGHT_CENTER_HOLD_MS        150U
+#define TURN_RIGHT_RECENTER_HOLD_MS      100U
+#define TURN_RIGHT_CENTER_HOLD_MS        100U
 
 #if TURN_RIGHT_RECENTER_US < CMD_SERVO_LEFT_US || TURN_RIGHT_RECENTER_US >= SERVO_CENTER_US
 #error "Right-turn return pulse must be left of centre and within servo endpoints"

@@ -158,7 +158,7 @@ DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT|RISING|FALLING>,state=<S>,threshol
 - Integer thresholds: LEFTIR 10..50 cm, RIGHTIR 10..60 cm, matching the current calibration tables.
 - FAR, ADC acquisition failure and conversion error count as infinity and complete normally with `state=DONE,ir_cm=FAR`. They do not raise an IR sensor fault.
 - Read before applying drive power; an already-satisfied condition completes without driving. While moving, sample approximately every 40 ms; two consecutive qualifying samples are required. If the initial GT/LT condition already holds, confirmation occurs 40 ms apart while stationary before drive is applied.
-- All active IR comparison stages use base PWM 1800 from startup, with global scaling and normal straight steering/wheel synchronization. This covers both gears, both sensors, GT/LT/RISING/FALLING, and commands with or without GOCM/LATERAL. GOCM retains its normal profile before the IR gate and reduces PWM immediately at the gate.
+- All active IR comparison stages use base PWM 1900 from startup, with global scaling and normal straight steering/wheel synchronization. This covers both gears, both sensors, GT/LT/RISING/FALLING, and commands with or without GOCM/LATERAL. GOCM retains its normal profile before the IR gate and reduces PWM immediately at the gate.
 - STOP gives ABORTED; 30 seconds gives TIMEOUT; either wheel reaching 200 cm gives DISTANCE_LIMIT. Gyro failure can still give SENSOR_ERROR. These failures stop the sequence.
 - In a hardcoded sequence, normal completion (including FAR/ADC failure) advances to the next row.
 
@@ -194,7 +194,7 @@ The saved reading must be finite and calibrated; NEAR/FAR cannot supply the disp
 
 ## 4. Turn Commands
 
-Command-turn steering wait is always enabled, independently of `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`. After setting the target steering pulse, motor drive stays zero until the estimated positioning time expires. The estimate is `80 + ceil(420 × abs(target_us − previous_us) / 1600)` ms, bounded to 80..500 ms; previous commands outside configured endpoints use 500 ms. These values are configurable in `turn_tuning.h`. This uses commanded PWM travel, with no physical position feedback. It needs validation with the loaded servo; small changes wait less, large changes wait longer. STOP remains available during the non-blocking wait.
+Command-turn steering wait is always enabled, independently of `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`. After setting the target steering pulse, motor drive stays zero until the estimated positioning time expires. The estimate is `60 + ceil(340 × abs(target_us − previous_us) / 1600)` ms, bounded to 60..400 ms; previous commands outside configured endpoints use 400 ms. These values are configurable in `turn_tuning.h`. This uses commanded PWM travel, with no physical position feedback. It needs validation with the loaded servo; small changes wait less, large changes wait longer. STOP remains available during the non-blocking wait.
 
 | Request | Arguments / response |
 |---|---|
@@ -207,7 +207,7 @@ Command-turn steering wait is always enabled, independently of `GYRO_RECALIBRATE
 
 LEFT/RIGHT selects steering side; positive A drives forward, negative A backward. R has no additional configured upper bound but must parse as int32. Terminal text includes `DONE`, `ABORTED`, `TIMEOUT`, `WRONG_SIGN`, `NO_TURN`, `BAD_CONFIG`, and `NO_IMU` (the last two are recognized interface states). Current turn parameters are defined in [turn_tuning.h](../Core/Inc/control/turn_tuning.h) and [turn_control.c](../Core/Src/control/turn_control.c).
 
-Independent switches in `robot_tuning.h` control turn-end actions, all defaulting to 0: `TURN_POST_STOP_SETTLE_ENABLE` adds 500 ms after braking; `TURN_RIGHT_RETURN_ENABLE` performs the stopped 1500 us / 500 ms then centre / 500 ms holds; `TURN_LEFT_HEADING_OFF_ENABLE` applies HEADING,OFF on successful LEFT; `TURN_END_HEADING_RESET_ENABLE` resets successful-turn heading history independently of steering holds. These work in either gear. `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` controls only repeated bias refresh, with mandatory stationary calibration preparation. Target braking and estimated turn-start servo waiting always remain. See [MOTION_SETTINGS.md](MOTION_SETTINGS.md) for preparation/stillness and sequence-gap switches.
+Independent switches in `robot_tuning.h` control turn-end actions, currently enabled: `TURN_POST_STOP_SETTLE_ENABLE` adds 150 ms after braking; `TURN_RIGHT_RETURN_ENABLE` performs the stopped 1500 us / 100 ms then centre / 100 ms holds; `TURN_LEFT_HEADING_OFF_ENABLE` applies HEADING,OFF on successful LEFT; `TURN_END_HEADING_RESET_ENABLE` resets successful-turn heading history independently of steering holds. These work in either gear. `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` controls only repeated bias refresh, with mandatory stationary calibration preparation. Target braking and estimated turn-start servo waiting always remain. See [MOTION_SETTINGS.md](MOTION_SETTINGS.md) for preparation/stillness and sequence-gap switches.
 
 RIGHT remains RUNNING during both non-blocking holds; new motion/manual steering
 is rejected as busy, and STOP cancels the sequence. Completion actions do not
