@@ -42,6 +42,14 @@ static int8_t sc_dir = 1;
 static uint16_t sc_fixed_steer_us;
 static uint8_t sc_until_us;
 static uint8_t sc_ir_strict_gt;
+static int32_t sc_ir_gate_cm;
+static uint8_t sc_ir_active;
+static uint32_t sc_ir_first_edge_cm_x10;
+static uint8_t sc_ir_first_edge_valid;
+static uint32_t sc_ir_raw = UINT32_MAX;
+static IRSensorRangeStatus sc_ir_range = IR_RANGE_ERROR;
+static uint8_t sc_ir_edge_armed;
+static uint8_t sc_ir_confirm_count;
 static uint8_t sc_ir_mode; /* 0=off, 1=LEFTIR, 2=RIGHTIR */
 static straight_ir_comparison_t sc_ir_comparison;
 static int32_t sc_ir_threshold_cm;
@@ -80,6 +88,7 @@ static uint8_t sc_us_near_start;
 static uint32_t sc_us_stop_lead_mm;
 static uint8_t sc_us_start_confirm_count = 0U;
 static uint8_t sc_us_stop_confirm_count = 0U;
+static uint32_t sc_us_stop_candidate_mm;
 static uint8_t sc_us_fail_count = 0U;
 static uint8_t sc_gyro_fail_count = 0U;
 static uint8_t sc_braking;
@@ -128,41 +137,100 @@ static uint8_t ReadIRStopCondition(void)
     IRSensorDistanceReading reading;
     IRSensorRangeStatus status = IR_RANGE_ERROR;
     sc_ir_cm_x10 = UINT32_MAX;
+    sc_ir_raw = UINT32_MAX;
     if (IRSensor_ReadDistance(&reading, 1U) == 0)
     {
         status = (sc_ir_mode == 1U) ? reading.left_status : reading.right_status;
+        sc_ir_raw = sc_ir_mode == 1U ? reading.adc.left_raw : reading.adc.right_raw;
         if (status == IR_RANGE_VALID || status == IR_RANGE_NEAR)
             sc_ir_cm_x10 = (sc_ir_mode == 1U)
                           ? reading.left_cm_x10 : reading.right_cm_x10;
     }
     sc_ir_last_tick = HAL_GetTick();
-    /* Return 2 for LT sensor faults: stop, but do not advance a sequence. */
+    sc_ir_range = status;
+    if (sc_ir_comparison == STRAIGHT_IR_RISING || sc_ir_comparison == STRAIGHT_IR_FALLING)
+    {
+        /* Acquisition faults cannot manufacture an obstacle edge. */
+        if (status == IR_RANGE_ERROR) return 2U;
+        uint32_t threshold = (uint32_t)sc_ir_threshold_cm * 10U;
+        uint8_t below = status == IR_RANGE_NEAR ||
+            (status == IR_RANGE_VALID && sc_ir_cm_x10 < threshold);
+        uint8_t above = status == IR_RANGE_FAR ||
+            (status == IR_RANGE_VALID && sc_ir_cm_x10 > threshold);
+        uint8_t rising = sc_ir_comparison == STRAIGHT_IR_RISING;
+        uint8_t qualifies = !sc_ir_edge_armed
+            ? (rising ? below : above) : (rising ? above : below);
+        /* RISING retains the minimum finite reading from the first below-threshold
+         * sample until the confirmed exit, including both confirmation phases. */
+        if (rising && status == IR_RANGE_VALID &&
+            (below || sc_ir_first_edge_valid) &&
+            (!sc_ir_first_edge_valid || sc_ir_cm_x10 < sc_ir_first_edge_cm_x10))
+        {
+            sc_ir_first_edge_cm_x10 = sc_ir_cm_x10;
+            sc_ir_first_edge_valid = 1U;
+        }
+        if (!qualifies)
+        {
+            sc_ir_confirm_count = 0U;
+            if (!rising && !sc_ir_edge_armed) sc_ir_first_edge_valid = 0U;
+        }
+        else if (sc_ir_confirm_count < IR_COMMAND_CONFIRM_SAMPLES)
+        {
+            if (!rising && !sc_ir_edge_armed && !sc_ir_confirm_count)
+            {
+                sc_ir_first_edge_cm_x10 = sc_ir_cm_x10;
+                sc_ir_first_edge_valid = status == IR_RANGE_VALID;
+            }
+            sc_ir_confirm_count++;
+        }
+        if (sc_ir_confirm_count < IR_COMMAND_CONFIRM_SAMPLES) return 0U;
+        if (!sc_ir_edge_armed)
+        {
+            sc_ir_edge_armed = 1U;
+            sc_ir_confirm_count = 0U;
+            return 0U;
+        }
+        return 1U;
+    }
+    uint8_t qualifies;
     if (sc_ir_comparison == STRAIGHT_IR_LT)
     {
         if (status == IR_RANGE_ERROR) return 2U;
-        if (status == IR_RANGE_NEAR) return 1U; /* Below calibrated 10 cm. */
-        return sc_ir_cm_x10 < (uint32_t)sc_ir_threshold_cm * 10U;
+        qualifies = status == IR_RANGE_NEAR || sc_ir_cm_x10 < (uint32_t)sc_ir_threshold_cm * 10U;
     }
-    if (sc_ir_strict_gt && status == IR_RANGE_ERROR) return 2U;
-    /* Preserve legacy GT infinity policy for FAR and failed reads. */
-    return sc_ir_cm_x10 > (uint32_t)sc_ir_threshold_cm * 10U;
+    else
+    {
+        if (sc_ir_strict_gt && status == IR_RANGE_ERROR) return 2U;
+        /* Preserve legacy GT infinity/failure policy, with confirmation. */
+        qualifies = sc_ir_cm_x10 > (uint32_t)sc_ir_threshold_cm * 10U;
+    }
+    if (!qualifies) sc_ir_confirm_count = 0U;
+    else if (sc_ir_confirm_count < IR_COMMAND_CONFIRM_SAMPLES) sc_ir_confirm_count++;
+    return sc_ir_confirm_count >= IR_COMMAND_CONFIRM_SAMPLES;
 }
 
-/* IR/US stops already block for the brake pulse. Sample during that existing
- * wait so their final heading transfers to the next route segment too. */
-static void StopWithHeadingSamples(void)
+/* Sample heading during the brake hold. UNTILUS also checks encoder quiet
+ * before releasing the bridge, with a maximum hold to bound failure latency. */
+static uint8_t StopWithHeadingSamples(void)
 {
     RobotHW_MotorBrakeBegin();
     uint32_t start = HAL_GetTick();
     uint32_t previous = sc_last_step_tick;
+    uint32_t quiet_since = start;
+    uint8_t us_release_ready = 0U;
     while (1)
     {
         uint32_t now = HAL_GetTick();
-        uint8_t done = now - start >= MOTOR_BRAKE_PULSE_MS;
-        if (done) RobotHW_MotorBrakeRelease();
+        uint8_t done = now - start >= MOTOR_BRAKE_PULSE_MS &&
+            (!sc_until_us || us_release_ready || now - start >= US_BRAKE_MAX_MS);
         if (done || now - previous >= CONTROL_PERIOD_MS)
         {
             RobotHW_EncoderDelta delta = RobotHW_EncoderDeltaRead(&sc_prev_enc);
+            if (sc_until_us)
+            {
+                if (delta.left_delta != 0 || delta.right_delta != 0) quiet_since = now;
+                us_release_ready = now - quiet_since >= US_BRAKE_QUIET_MS;
+            }
             sc_total_left_counts += abs((int)delta.left_delta);
             sc_total_right_counts += abs((int)delta.right_delta);
             (void)RobotHW_GyroUpdateYaw((float)(now - previous) / 1000.0f,
@@ -171,11 +239,14 @@ static void StopWithHeadingSamples(void)
             sc_yaw_deg = MotionHeading_ErrorDeg();
             previous = now;
         }
-        if (done) break;
+        done = now - start >= MOTOR_BRAKE_PULSE_MS &&
+            (!sc_until_us || us_release_ready || now - start >= US_BRAKE_MAX_MS);
+        if (done) { RobotHW_MotorBrakeRelease(); break; }
         HAL_Delay(1U);
     }
     RobotHW_ServoCenter();
     MotionHeading_End();
+    return !sc_until_us || us_release_ready;
 }
 
 static void FinishIR(straight_state_t state)
@@ -185,7 +256,11 @@ static void FinishIR(straight_state_t state)
         /* Keep the condition-triggering sample before braking. */
         if (sc_ir_mode == 1U) Straight_LeftIRStopCmX10 = sc_ir_cm_x10;
         else if (sc_ir_mode == 2U) Straight_RightIRStopCmX10 = sc_ir_cm_x10;
-        StopWithHeadingSamples();
+        if (!StopWithHeadingSamples())
+        {
+            state = STRAIGHT_STALL;
+            MotionHeading_Degrade();
+        }
     }
     else
     {
@@ -196,6 +271,16 @@ static void FinishIR(straight_state_t state)
     }
     sc_final_elapsed_ms = HAL_GetTick() - sc_start_tick;
     sc_state = state;
+}
+
+void Straight_IRDiagnostics(uint32_t *raw, int *range_status, uint32_t *age_ms,
+                            uint8_t *confirm, uint8_t *armed)
+{
+    if (raw) *raw = sc_ir_raw;
+    if (range_status) *range_status = sc_ir_range;
+    if (age_ms) *age_ms = HAL_GetTick() - sc_ir_last_tick;
+    if (confirm) *confirm = sc_ir_confirm_count;
+    if (armed) *armed = sc_ir_edge_armed;
 }
 
 straight_ir_comparison_t Straight_IRComparison(void)
@@ -343,6 +428,9 @@ void Straight_Init(void)
     MotionHeading_Reset();
     sc_braking = 0U;
     sc_ir_mode = 0U;
+    sc_ir_edge_armed = 0U;
+    sc_ir_first_edge_valid = 0U;
+    sc_ir_confirm_count = 0U;
     sc_state = STRAIGHT_IDLE;
     sc_until_us = 0U;
     sc_us_moving = 0U;
@@ -377,7 +465,7 @@ void Straight_Init(void)
 
 static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
                                     int32_t ir_threshold_cm, straight_ir_comparison_t comparison,
-                                    uint16_t fixed_steer_us, uint8_t strict_gt)
+                                    uint16_t fixed_steer_us, uint8_t strict_gt, int32_t gate_cm)
 {
     int32_t abs_cm;
     int prep_rc;
@@ -408,8 +496,14 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 
     sc_until_us = 0U;
     sc_ir_mode = ir_mode;
+    sc_ir_raw = UINT32_MAX; sc_ir_range = IR_RANGE_ERROR; sc_ir_last_tick = HAL_GetTick();
+    sc_ir_gate_cm = gate_cm;
+    sc_ir_active = gate_cm == 0;
     sc_ir_strict_gt = strict_gt;
     sc_ir_comparison = comparison;
+    sc_ir_edge_armed = 0U;
+    sc_ir_first_edge_valid = 0U;
+    sc_ir_confirm_count = 0U;
     sc_ir_threshold_cm = ir_threshold_cm;
     sc_ir_cm_x10 = UINT32_MAX;
     sc_profile = (abs_cm <= SHORT_PROFILE_MAX_CM)
@@ -467,7 +561,8 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     /* Distance allowance for normal GOCM only; calibration and IR retain
      * their existing targets. UNTILUS has its own start/control path. */
     const float brake_delay_cm = (!ir_mode && !fixed_steer_us) ? GOCM_BRAKE_DELAY_CM : 0.0f;
-    if (sc_profile == STRAIGHT_PROFILE_SHORT)
+    if (gate_cm) target_revolutions = (float)gate_cm / WHEEL_CIRCUMFERENCE_CM;
+    else if (sc_profile == STRAIGHT_PROFILE_SHORT)
     {
         const float overshoot_comp_cm = (sc_dir < 0)
             ? SHORT_REVERSE_OVERSHOOT_COMP_CM
@@ -500,17 +595,24 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     sc_start_tick = HAL_GetTick();
     sc_drive_start_tick = sc_start_tick;
     sc_last_step_tick = sc_start_tick;
-    sc_timeout_ms = (uint32_t)abs_cm * 300U + 5000U;
+    sc_timeout_ms = ir_mode ? IR_COMMAND_TIMEOUT_MS : (uint32_t)abs_cm * 300U + 5000U;
     sc_final_elapsed_ms = 0U;
     sc_state = STRAIGHT_RUNNING;
 
     TraceReset();
     TraceCapture('S', 1U);
 
-    if (sc_ir_mode)
+    if (sc_ir_mode && sc_ir_active)
     {
         sc_timeout_ms = IR_COMMAND_TIMEOUT_MS;
         uint8_t result = ReadIRStopCondition();
+        /* Confirm an already-satisfied GT/LT while still stationary. */
+        if (!result && sc_ir_confirm_count &&
+            (sc_ir_comparison == STRAIGHT_IR_GT || sc_ir_comparison == STRAIGHT_IR_LT))
+        {
+            HAL_Delay(IR_COMMAND_SAMPLE_MS);
+            result = ReadIRStopCondition();
+        }
         if (result)
             FinishIR(result == 2U ? STRAIGHT_SENSOR_ERROR : STRAIGHT_DONE);
         else
@@ -527,7 +629,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 
 int Straight_StartCm(int32_t target_cm)
 {
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0);
 }
 
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
@@ -537,7 +639,7 @@ int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
         servo_us > (int32_t)SERVO_CENTER_US + STRAIGHT_CAL_MAX_OFFSET_US ||
         servo_us <= (int32_t)CMD_SERVO_LEFT_US || servo_us >= (int32_t)CMD_SERVO_RIGHT_US)
         return -2;
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us, 0U);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us, 0U, 0);
 }
 
 uint32_t Straight_FixedSteeringUs(void) { return sc_fixed_steer_us; }
@@ -550,11 +652,44 @@ int Straight_StartUntilIRGreaterCm(int32_t threshold_cm, uint8_t side)
 int Straight_StartUntilIRCm(int32_t threshold_cm, uint8_t side,
                             straight_ir_comparison_t comparison)
 {
-    if (comparison != STRAIGHT_IR_GT && comparison != STRAIGHT_IR_LT) return -2;
+    return Straight_StartUntilIRDirectionCm(threshold_cm, side, comparison, 1);
+}
+
+int Straight_StartUntilIRDirectionCm(int32_t threshold_cm, uint8_t side,
+                                     straight_ir_comparison_t comparison, int8_t direction)
+{
+    if (direction != 1 && direction != -1) return -2;
+    if (comparison != STRAIGHT_IR_GT && comparison != STRAIGHT_IR_LT &&
+        comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING) return -2;
     /* Match the actual driver calibration: LEFT 10..50, RIGHT 10..60 cm. */
     if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
         return -2;
-    return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U, 0U);
+    return Straight_StartCmInternal(direction * MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U, 0U, 0);
+}
+
+uint8_t Straight_IRFirstEdgeReading(uint32_t *cm_x10)
+{
+    if (!sc_ir_edge_armed || !sc_ir_first_edge_valid) return 0U;
+    if (cm_x10) *cm_x10 = sc_ir_first_edge_cm_x10;
+    return 1U;
+}
+
+uint8_t Straight_IRGateStatus(int32_t *distance_cm, uint8_t *active)
+{
+    if (distance_cm) *distance_cm = sc_target_cm_signed;
+    if (active) *active = sc_ir_active;
+    return sc_ir_mode && sc_ir_gate_cm > 0;
+}
+
+int Straight_StartCmThenIR(int32_t distance_cm, uint8_t side,
+                           straight_ir_comparison_t comparison, int32_t threshold_cm)
+{
+    if (distance_cm == INT32_MIN || distance_cm == 0 ||
+        distance_cm > MAX_COMMAND_DISTANCE_CM || distance_cm < -MAX_COMMAND_DISTANCE_CM ||
+        side > 1U || threshold_cm < 10 || threshold_cm > (side ? 60 : 50) ||
+        comparison < STRAIGHT_IR_GT || comparison > STRAIGHT_IR_FALLING) return -2;
+    int32_t gate = distance_cm < 0 ? -distance_cm : distance_cm;
+    return Straight_StartCmInternal(distance_cm, side + 1U, threshold_cm, comparison, 0U, 0U, gate);
 }
 
 /* Composite lateral approach: FAR satisfies GT; acquisition errors must abort. */
@@ -563,21 +698,27 @@ int Straight_StartUntilIRGreaterValidCm(int32_t threshold_cm, uint8_t side)
     if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
         return -2;
     return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U,
-                                   threshold_cm, STRAIGHT_IR_GT, 0U, 1U);
+                                   threshold_cm, STRAIGHT_IR_GT, 0U, 1U, 0);
 }
 
 /* RUNNING includes the stationary initial measurement wait, so every existing
  * motion interlock and STOP command also covers that phase. */
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
 {
+    return Straight_StartUntilUltrasonicDirectionCm(threshold_cm, 1);
+}
+
+int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction)
+{
     int prep_rc;
     if (sc_state == STRAIGHT_RUNNING) return -3;
-    if (threshold_cm < US_MIN_THRESHOLD_CM || threshold_cm > US_MAX_THRESHOLD_CM)
+    if ((direction != 1 && direction != -1) ||
+        threshold_cm < US_MIN_THRESHOLD_CM || threshold_cm > US_MAX_THRESHOLD_CM)
         return -2;
     MotionHeading_Prepare();
     sc_braking = 0U;
     if (MOTION_PREPARE_STOP_ENABLE) RobotHW_MotorStop();
-    RobotHW_ServoSetUs(StraightCenterUs(1));
+    RobotHW_ServoSetUs(StraightCenterUs(direction));
     if (UltrasonicSensor_Init() != 0) { MotionHeading_Degrade(); return -1; }
     prep_rc = RobotHW_PrepareMotionSensors();
     if (prep_rc != 0) { MotionHeading_Degrade(); return prep_rc; }
@@ -591,7 +732,7 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
     sc_us_moving = 0U;
     sc_us_threshold_cm = threshold_cm;
     sc_us_stop_reading_valid = 0U;
-    sc_dir = 1;
+    sc_dir = direction;
     sc_fixed_steer_us = 0U;
     sc_target_cm_signed = 0;
     sc_total_left_counts = sc_total_right_counts = 0;
@@ -667,12 +808,15 @@ static void StartUltrasonicDrive(uint32_t now)
     uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
     uint32_t gap = sc_us_sample.distance_mm > target_mm
                  ? sc_us_sample.distance_mm - target_mm : target_mm - sc_us_sample.distance_mm;
-    sc_us_near_start = gap <= US_SLOW_MARGIN_MM;
+    uint8_t no_echo = UltrasonicClearanceMm(now) == UINT32_MAX;
+    sc_us_near_start = no_echo || gap <= US_SLOW_MARGIN_MM;
     sc_us_approach_mode = sc_us_near_start;
     uint32_t configured_lead = sc_dir > 0 ? US_FORWARD_STOP_LEAD_MM : US_REVERSE_STOP_LEAD_MM;
     /* Small corrections retain travel toward the target before braking. */
-    sc_us_stop_lead_mm = configured_lead < gap / 2U ? configured_lead : gap / 2U;
-    sc_us_base_pwm = sc_us_near_start ? US_APPROACH_PWM : US_KICKSTART_PWM;
+    sc_us_stop_lead_mm = no_echo ? configured_lead :
+        (configured_lead < gap / 2U ? configured_lead : gap / 2U);
+    sc_us_base_pwm = no_echo ? US_FINAL_APPROACH_PWM :
+        sc_us_near_start ? US_NEAR_START_PWM : US_KICKSTART_PWM;
     sc_us_kick_complete = 0U;
     sc_us_start_confirm_count = 0U;
     sc_us_stop_confirm_count = 0U;
@@ -702,18 +846,26 @@ static void StepUltrasonic(void)
             sc_us_fail_count = 0U;
             if (!sc_us_moving)
             {
-                uint32_t error_mm = sample.distance_mm > target_mm
-                                  ? sample.distance_mm - target_mm : target_mm - sample.distance_mm;
-                /* Confirm arrival tolerance before selecting a direction. */
-                int8_t direction = error_mm <= US_ARRIVAL_TOLERANCE_MM ? 0 :
-                                   sample.distance_mm > target_mm ? 1 : -1;
-                if (sc_dir != direction) sc_us_start_confirm_count = 0U;
-                sc_dir = direction;
-                if (sc_us_start_confirm_count < UINT8_MAX) sc_us_start_confirm_count++;
-                if (sc_us_start_confirm_count >= US_START_CONFIRM_SAMPLES)
+                uint8_t already_reached = sc_dir > 0
+                    ? sample.distance_mm < target_mm : sample.distance_mm > target_mm;
+                if (already_reached)
                 {
-                    if (sc_dir == 0) { FinishUltrasonic(STRAIGHT_DONE); return; }
-                    StartUltrasonicDrive(now);
+                    uint32_t spread = sample.distance_mm > sc_us_stop_candidate_mm
+                        ? sample.distance_mm - sc_us_stop_candidate_mm
+                        : sc_us_stop_candidate_mm - sample.distance_mm;
+                    if (!sc_us_stop_confirm_count || spread > US_STOP_CONFIRM_MAX_SPREAD_MM)
+                        sc_us_stop_confirm_count = 1U;
+                    else sc_us_stop_confirm_count++;
+                    sc_us_stop_candidate_mm = sample.distance_mm;
+                    sc_us_start_confirm_count = 0U;
+                    if (sc_us_stop_confirm_count >= US_STOP_CONFIRM_SAMPLES)
+                    { FinishUltrasonic(STRAIGHT_DONE); return; }
+                }
+                else
+                {
+                    sc_us_stop_confirm_count = 0U;
+                    if (++sc_us_start_confirm_count >= US_START_CONFIRM_SAMPLES)
+                        StartUltrasonicDrive(now);
                 }
             }
             else
@@ -723,7 +875,16 @@ static void StepUltrasonic(void)
                     ? sample.distance_mm <= target_mm + sc_us_stop_lead_mm
                     : sample.distance_mm >= target_mm - sc_us_stop_lead_mm;
                 if (!crossed) sc_us_stop_confirm_count = 0U;
-                else if (sc_us_stop_confirm_count < UINT8_MAX) sc_us_stop_confirm_count++;
+                else
+                {
+                    uint32_t spread = sample.distance_mm > sc_us_stop_candidate_mm
+                        ? sample.distance_mm - sc_us_stop_candidate_mm
+                        : sc_us_stop_candidate_mm - sample.distance_mm;
+                    if (sc_us_stop_confirm_count == 0U || spread > US_STOP_CONFIRM_MAX_SPREAD_MM)
+                        sc_us_stop_confirm_count = 1U;
+                    else if (sc_us_stop_confirm_count < UINT8_MAX) sc_us_stop_confirm_count++;
+                    sc_us_stop_candidate_mm = sample.distance_mm;
+                }
                 if (sc_us_stop_confirm_count >= US_STOP_CONFIRM_SAMPLES)
                 { FinishUltrasonic(STRAIGHT_DONE); return; }
             }
@@ -733,9 +894,8 @@ static void StepUltrasonic(void)
             sc_us_stop_confirm_count = 0U;
             sc_us_start_confirm_count = 0U;
             if (sc_us_fail_count < UINT8_MAX) sc_us_fail_count++;
-            /* No initial valid distance means no direction can be selected. */
-            if (!sc_us_moving && sc_us_fail_count >= US_START_UNKNOWN_SAMPLES)
-            { FinishUltrasonic(STRAIGHT_SENSOR_ERROR); return; }
+            /* A missing echo cannot select arrival, but direction is explicit. */
+            if (!sc_us_moving) StartUltrasonicDrive(now);
         }
     }
     /* Keep sampling after a brief no-echo result; -3 here only means
@@ -792,7 +952,7 @@ static void Straight_StepInternal(void)
         return;
     }
 
-    if (sc_ir_mode && HAL_GetTick() - sc_ir_last_tick >= IR_COMMAND_SAMPLE_MS)
+    if (sc_ir_mode && sc_ir_active && HAL_GetTick() - sc_ir_last_tick >= IR_COMMAND_SAMPLE_MS)
     {
         uint8_t result = ReadIRStopCondition();
         if (result)
@@ -804,6 +964,12 @@ static void Straight_StepInternal(void)
 
     if (sc_until_us)
     {
+        /* Startup confirmation must obey the same command timeout as driving. */
+        if (!sc_us_moving && HAL_GetTick() - sc_start_tick >= sc_timeout_ms)
+        {
+            FinishUltrasonic(STRAIGHT_TIMEOUT);
+            return;
+        }
         /* Retain yaw while waiting for the first ultrasound measurement,
          * before StartUltrasonicDrive resets the local gyro frame again. */
         if (!sc_us_moving && HAL_GetTick() - sc_last_step_tick >= CONTROL_PERIOD_MS)
@@ -852,6 +1018,14 @@ static void Straight_StepInternal(void)
     right_counts = abs((int)delta.right_delta);
     sc_total_left_counts += left_counts;
     sc_total_right_counts += right_counts;
+    if (sc_ir_mode && !sc_ir_active &&
+        (float)sc_total_left_counts / LEFT_COUNTS_PER_CM >= sc_ir_gate_cm &&
+        (float)sc_total_right_counts / RIGHT_COUNTS_PER_CM >= sc_ir_gate_cm)
+    {
+        sc_ir_active = 1U;
+        sc_ir_confirm_count = sc_ir_edge_armed = 0U;
+        sc_ir_last_tick = now - IR_COMMAND_SAMPLE_MS;
+    }
 
     if (sc_until_us &&
         ((float)sc_total_left_counts / LEFT_COUNTS_PER_CM >= US_MAX_TRAVEL_CM ||
@@ -1001,21 +1175,29 @@ static void Straight_StepInternal(void)
 
         if (!sc_us_kick_complete)
         {
-            sc_us_base_pwm = sc_us_near_start ? US_APPROACH_PWM : US_KICKSTART_PWM;
+            sc_us_base_pwm = clearance == UINT32_MAX ? US_FINAL_APPROACH_PWM :
+                sc_us_near_start ? US_NEAR_START_PWM : US_KICKSTART_PWM;
             base_pwm = sc_us_base_pwm;
             force_equal_kick = 1U;
         }
         else
         {
-            target_pwm = sc_us_approach_mode
-                       ? US_APPROACH_PWM : US_CRUISE_PWM;
+            uint32_t remaining_mm = clearance == UINT32_MAX ? UINT32_MAX :
+                (sc_dir > 0 ? (clearance > target_mm ? clearance - target_mm : 0U)
+                            : (clearance < target_mm ? target_mm - clearance : 0U));
+            target_pwm = clearance == UINT32_MAX || remaining_mm <= US_FINAL_APPROACH_MARGIN_MM
+                       ? US_FINAL_APPROACH_PWM
+                       : sc_us_approach_mode ? US_APPROACH_PWM : US_CRUISE_PWM;
+            /* Once at crawl speed, a lost echo must not accelerate the vehicle. */
+            if (clearance == UINT32_MAX && sc_us_base_pwm <= US_FINAL_APPROACH_PWM)
+                target_pwm = US_FINAL_APPROACH_PWM;
             /* Reduce promptly on approach; retain slew limiting for acceleration. */
-            sc_us_base_pwm = sc_us_approach_mode && sc_us_base_pwm > target_pwm
+            sc_us_base_pwm = sc_us_base_pwm > target_pwm
                            ? target_pwm : SlewPwm(sc_us_base_pwm, target_pwm, dt_sec);
             base_pwm = sc_us_base_pwm;
         }
     }
-    else if (sc_ir_mode)
+    else if (sc_ir_mode && sc_ir_active)
     {
         force_equal_kick = elapsed_ms < IR_COMMAND_KICK_MS;
         base_pwm = force_equal_kick ? IR_COMMAND_KICK_PWM : IR_COMMAND_CRUISE_PWM;

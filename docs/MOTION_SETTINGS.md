@@ -100,3 +100,7 @@ Command turns always wait before driving, including with gyro recalibration off.
 The open-loop PWM-travel estimate ranges from 80 to 500 ms; configurable in
 turn_tuning.h. It is not a physical servo-position measurement. The standalone
 minimum-radius diagnostic retains its own fixed 500 ms wait.
+
+UNTILUS 末段速度与制动参数位于 `straight_tuning.h`：最后 20 cm 使用 `US_FINAL_APPROACH_PWM=1800`，成功制动最少保持 `MOTOR_BRAKE_PULSE_MS=150` ms；编码器连续 `US_BRAKE_QUIET_MS=60` ms 无变化后释放，最长 `US_BRAKE_MAX_MS=600` ms。达到上限仍有编码器运动则报 STALL。IR、GOCM 与转弯制动参数保持原值。
+
+UNTILUS final approach and brake settings are in `straight_tuning.h`: 1800 PWM within 200 mm after startup, at least 150 ms braking, 60 ms of encoder quiet before release, and a 600 ms maximum. Continued encoder motion at the maximum reports STALL.

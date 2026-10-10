@@ -97,3 +97,23 @@ GT/LT validation for this revision: STM32 firmware compilation and linking passe
 The expanded host suite compiled with -Wall -Wextra -Werror, but execution
 could not be completed in this environment. UART integration and physical
 robot behavior still require validation.
+
+## Explicit direction / 显式方向
+
+`STRAIGHT,FORWARD,LEFTIR,GT,30`、`STRAIGHT,BACKWARD,LEFTIR,LT,30`；RIGHTIR 同样支持两个方向和 GT/LT，方向参数固定紧跟 STRAIGHT。省略方向默认前进。回复／状态／完成事件增加 `dir=FORWARD|BACKWARD`。原有阈值范围、故障策略、缓存、STOP、超时和行程限制沿用，LATERAL 的内部 IR 接近阶段继续前进。
+
+FORWARD and BACKWARD immediately follow STRAIGHT and independently combine with either IR side and GT/LT. Omitted direction defaults to forward. Responses include `dir=FORWARD|BACKWARD`; existing bounds, sensor rules, caches and termination limits remain.
+
+## Edge detection / 障碍边缘检测
+
+`STRAIGHT,FORWARD,LEFTIR,RISING,30`：先遇到 IR<30 cm，继续行驶，再遇到 IR>30 cm 时停车。`STRAIGHT,BACKWARD,RIGHTIR,FALLING,30`：先遇到 IR>30 cm，再遇到 IR<30 cm 时停车。前后方向和左右探头可任意组合，等于阈值继续等待；每条新指令清空阶段，停车缓存最终读数。NEAR 视为小于，FAR 视为大于；采集错误报 SENSOR_ERROR，不作为边缘。
+
+RISING requires below then above; FALLING requires above then below. Equality preserves phase without triggering. Each command clears phase, and errors abort rather than create crossings. Status and completion preserve the requested operator name.
+
+IR 确认策略：GT/LT 连续两次满足条件才完成；RISING/FALLING 两个阶段各确认两次。等于阈值或不满足当前阶段时清零当前计数，首阶段确认后保持至本条指令结束。采样间隔约 40 ms。初始 GT/LT 已满足条件时在停车状态间隔 40 ms 确认第二次，再决定完成或起步。
+
+## 连续行程后检测 / Continuous distance gate
+
+例：`STRAIGHT,GOCM,20,RIGHTIR,RISING,30`，先前进 20 cm 不检测 IR，再连续运动并检测右侧先小于 30、后大于 30 的边缘。负 x 表示后退；编码器门槛不含停车补偿。状态追加 `gocm_cm` 和 `phase=GOCM/IR`，总时间／行程仍有限制，详见 PROTOCOL。
+
+`STRAIGHT,GOCM,30,LEFTIR,RISING,50,LATERAL`：先直行 30 cm，再确认左 IR<50 的阶段并缓存该确认组的第一条读数，随后确认 IR>50 并停车，再以缓存值 +10 cm 向左侧移。两阶段各连续确认两次，不读取新的 IR 作为侧移距离。缓存须有效且不超过 45 cm，补偿后不得超过 LATERAL 的 55 cm 上限。

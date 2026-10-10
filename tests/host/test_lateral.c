@@ -15,6 +15,9 @@ int IRSensor_ReadDistance(IRSensorDistanceReading *out, uint32_t samples)
     *out = ir;
     return ir_fail ? -1 : 0;
 }
+uint8_t Straight_IRFirstEdgeReading(uint32_t *out) { (void)out; return 0; }
+int Straight_StartCmThenIR(int32_t cm, uint8_t side, straight_ir_comparison_t op, int32_t threshold)
+{ (void)cm; (void)side; (void)op; (void)threshold; return -2; }
 static turn_state_t turn;
 static straight_state_t straight;
 static int calls, fail_call, fail_rc;

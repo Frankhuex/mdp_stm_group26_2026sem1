@@ -26,14 +26,27 @@ int Straight_StartCm(int32_t target_cm);
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us);
 /* 0 = normal gyro steering, otherwise the last accepted fixed pulse. */
 uint32_t Straight_FixedSteeringUs(void);
-/* Fresh confirmed distance selects forward (>target) or reverse (<target).
- * Stops at a direction-specific lead before the target; initial readings within
- * arrival tolerance complete stationary.
- * Missing initial measurements fail without driving. */
+/* Default forward; explicit direction is +1=FORWARD, -1=BACKWARD.
+ * No echo: creep in the requested direction and continue acquisition.
+ * Direction never changes; STOP, stall, timeout and travel bounds remain. */
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm);
-typedef enum { STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT } straight_ir_comparison_t;
+int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction);
+typedef enum {
+    STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT,
+    STRAIGHT_IR_RISING,  /* below then above */
+    STRAIGHT_IR_FALLING  /* above then below */
+} straight_ir_comparison_t;
 int Straight_StartUntilIRCm(int32_t threshold_cm, uint8_t side,
                             straight_ir_comparison_t comparison);
+/* Explicit gear, independent of sensor side and comparison: +1/-1. */
+int Straight_StartUntilIRDirectionCm(int32_t threshold_cm, uint8_t side,
+                                     straight_ir_comparison_t comparison, int8_t direction);
+int Straight_StartCmThenIR(int32_t distance_cm, uint8_t side,
+                           straight_ir_comparison_t comparison, int32_t threshold_cm);
+uint8_t Straight_IRFirstEdgeReading(uint32_t *cm_x10);
+uint8_t Straight_IRGateStatus(int32_t *distance_cm, uint8_t *active);
+void Straight_IRDiagnostics(uint32_t *raw, int *range_status, uint32_t *age_ms,
+                            uint8_t *confirm, uint8_t *armed);
 straight_ir_comparison_t Straight_IRComparison(void);
 /* Forward until selected IR > threshold. side: 0=LEFT, 1=RIGHT.
  * FAR or ADC failure completes normally, per command policy. */

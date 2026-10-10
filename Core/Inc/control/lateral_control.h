@@ -12,6 +12,7 @@ typedef struct {
     lateral_state_t state;
     uint8_t side; /* 0=LEFT, 1=RIGHT */
     uint8_t from_ir;
+    uint8_t from_edge;
     uint8_t stage; /* 0=IR approach, 1/2=turn arcs; retained on failure */
     uint32_t initial_ir_cm_x10;
     uint32_t distance_cm_x10;
@@ -26,6 +27,8 @@ void Lateral_Init(void);
  * then drives until selected IR > 50 cm before starting the two arcs. Returns -5 for
  * unavailable IR, -2 for invalid range, -3 for busy; other errors from TURN. */
 int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10);
+int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
+                             straight_ir_comparison_t comparison, int32_t threshold_cm);
 void Lateral_Step(void);
 void Lateral_Stop(void);
 lateral_state_t Lateral_State(void);

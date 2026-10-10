@@ -4,6 +4,8 @@
 #include "control/straight_tuning.h"   /* STRAIGHT_FORWARD_TRIM_US for calibration */
 #include "control/turn_control.h"
 #include "control/lateral_control.h"
+#include "control/bypass_control.h"
+#include "sensors/ir_sensor.h"
 #include "control/motion_heading.h"
 #include "drivers/robot_hw.h"
 #include "drivers/oled.h"
@@ -101,56 +103,52 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_left1_commands[] =
 {
-    "LATERAL,LEFT,25",
-    "STRAIGHT,RIGHTIR,GT,50",
-    "LATERAL,RIGHT,25",
-    "STRAIGHT,UNTILUS,35",
+    // "LATERAL,LEFT,25",
+    // "STRAIGHT,RIGHTIR,GT,50",
+    // "LATERAL,RIGHT,25",
 
     // "TURN,LEFT,R=35,A=60",
     // "TURN,RIGHT,R=35,A=120",
     // "TURN,LEFT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
-    // "STRAIGHT,UNTILUS,35",
+
+    "BYPASS,LEFT,25",
+    "STRAIGHT,BACKWARD,UNTILUS,35",
 };
 static const char *const fast_left2_commands[] =
 {
     "TURN,LEFT,R=35,A=90",
-    "STRAIGHT,RIGHTIR,GT,50",
+    "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
+    "STRAIGHT,RIGHTIR,GT,30",
     "TURN,RIGHT,R=35,A=180",
-    "STRAIGHT,GOCM,30",
-    "STRAIGHT,RIGHTIR,GT,50",
+    "STRAIGHT,RIGHTIR,RISING,50",
     "TURN,RIGHT,R=35,A=90",
-	"STRAIGHT,GOCM,30",
-    "STRAIGHT,RIGHTIR,LT,50",
-
-    "LATERAL,RIGHT,IR",
+	"STRAIGHT,GOCM,30,RIGHTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,15",
 };
 static const char *const fast_right1_commands[] =
 {
-    "LATERAL,RIGHT,25",
-    "STRAIGHT,LEFTIR,GT,50",
-    "LATERAL,LEFT,25",
-    "STRAIGHT,UNTILUS,35",
+    // "LATERAL,RIGHT,25",
+    // "STRAIGHT,LEFTIR,GT,50",
+    // "LATERAL,LEFT,25",
 
     // "TURN,RIGHT,R=35,A=60",
     // "TURN,LEFT,R=35,A=120",
     // "TURN,RIGHT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
-    // "STRAIGHT,UNTILUS,35",
+
+    "BYPASS,RIGHT,28",
+    "STRAIGHT,BACKWARD,UNTILUS,35",
 };
 static const char *const fast_right2_commands[] =
 {
     "TURN,RIGHT,R=35,A=90",
-    "STRAIGHT,LEFTIR,GT,50",
+    "STRAIGHT,BACKWARD,LEFTIR,LT,30",
+    "STRAIGHT,LEFTIR,GT,30",
     "TURN,LEFT,R=35,A=180",
-    "STRAIGHT,GOCM,30",
-    "STRAIGHT,LEFTIR,GT,50",
+    "STRAIGHT,LEFTIR,RISING,50",
     "TURN,LEFT,R=35,A=90",
-	"STRAIGHT,GOCM,30",
-    "STRAIGHT,LEFTIR,LT,50",
-    
-    "LATERAL,LEFT,IR",
+	"STRAIGHT,GOCM,30,LEFTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,15",
 };
 
@@ -160,7 +158,8 @@ typedef enum
     PENDING_MOTION_STRAIGHT,
     PENDING_MOTION_UNTILUS,
     PENDING_MOTION_TURN,
-    PENDING_MOTION_LATERAL
+    PENDING_MOTION_LATERAL,
+    PENDING_MOTION_BYPASS
 } pending_motion_t;
 
 static const char *CommandInterface_RunSequenceRows(const char *const commands[],
@@ -322,7 +321,8 @@ static void FormatFloat3(char *buf, size_t size, float value)
 
 static uint8_t AnyMotionRunning(void)
 {
-    return (Lateral_State() == LATERAL_RUNNING ||
+    return (Bypass_State() == BYPASS_RUNNING ||
+            Lateral_State() == LATERAL_RUNNING ||
             Straight_State() == STRAIGHT_RUNNING ||
             Turn_State() == TURN_RUNNING);
 }
@@ -372,21 +372,40 @@ static void FormatUltrasonicMm(char *out, size_t size, uint32_t mm)
     else snprintf(out, size, "%lu", (unsigned long)mm);
 }
 
+static const char *IRComparisonText(straight_ir_comparison_t op)
+{
+    switch (op) {
+        case STRAIGHT_IR_GT: return "GT";
+        case STRAIGHT_IR_LT: return "LT";
+        case STRAIGHT_IR_RISING: return "RISING";
+        case STRAIGHT_IR_FALLING: return "FALLING";
+        default: return "UNKNOWN";
+    }
+}
+
 static int SendIRStatus(uint8_t done)
 {
     int32_t threshold;
     uint32_t distance;
     int mode = Straight_IRStatus(&threshold, &distance);
-    char msg[192], cm[24];
+    int32_t target; Straight_Status(NULL, &target, NULL, NULL, NULL, NULL);
+    char msg[384], cm[24], gate[64] = "";
+    uint32_t raw, age; int range; uint8_t confirm, armed;
+    Straight_IRDiagnostics(&raw,&range,&age,&confirm,&armed);
+    int32_t gate_cm; uint8_t active;
+    if (Straight_IRGateStatus(&gate_cm, &active))
+        snprintf(gate,sizeof(gate),",gocm_cm=%ld,phase=%s",(long)gate_cm,active?"IR":"GOCM");
     if (!mode) return 0;
     if (distance == UINT32_MAX) snprintf(cm, sizeof(cm), "FAR");
     else snprintf(cm, sizeof(cm), "%lu.%lu",
                   (unsigned long)(distance / 10U), (unsigned long)(distance % 10U));
     snprintf(msg, sizeof(msg),
-             "%sSTRAIGHT,mode=%s,op=%s,state=%s,threshold_cm=%ld,ir_cm=%s\r\n",
+             "%sSTRAIGHT,mode=%s,op=%s,state=%s,threshold_cm=%ld,ir_cm=%s,dir=%s%s,ir_raw=%lu,ir_status=%s,ir_age_ms=%lu,confirm=%u,armed=%u\r\n",
              done ? "DONE," : "", mode == 1 ? "LEFTIR" : "RIGHTIR",
-             Straight_IRComparison() == STRAIGHT_IR_LT ? "LT" : "GT",
-             StraightStateText(Straight_State()), (long)threshold, cm);
+             IRComparisonText(Straight_IRComparison()),
+             StraightStateText(Straight_State()), (long)threshold, cm,
+             target < 0 ? "BACKWARD" : "FORWARD", gate, (unsigned long)raw,
+             IRSensor_RangeText((IRSensorRangeStatus)range),(unsigned long)age,confirm,armed);
     Cmd_Send(msg);
     return 1;
 }
@@ -412,10 +431,33 @@ static void SendLateralStatus(uint8_t done)
     snprintf(msg, sizeof(msg),
         "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,ir_cm_x10=%lu,straight_state=%s,turn_state=%s,start_rc=%d\r\n",
         done ? "DONE," : "", LateralStateText(st.state), st.side ? "RIGHT" : "LEFT",
-        st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
+        st.from_edge ? "EDGE_IR" : st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
         (unsigned long)(st.distance_cm_x10 % 10U), (long)st.angle_deg,
         (unsigned)st.stage, (unsigned long)st.initial_ir_cm_x10,
         StraightStateText(st.straight_state), TurnStateText(st.turn_state), st.start_rc);
+    Cmd_Send(msg);
+}
+
+static const char *BypassStateText(bypass_state_t state)
+{
+    switch (state) {
+        case BYPASS_IDLE: return "IDLE";
+        case BYPASS_RUNNING: return "RUNNING";
+        case BYPASS_DONE: return "DONE";
+        case BYPASS_ABORTED: return "ABORTED";
+        case BYPASS_TURN_ERROR: return "TURN_ERROR";
+        case BYPASS_START_ERROR: return "START_ERROR";
+        default: return "UNKNOWN";
+    }
+}
+static void SendBypassStatus(uint8_t done)
+{
+    bypass_status_t st; char msg[192]; Bypass_Status(&st);
+    snprintf(msg, sizeof(msg),
+        "%sBYPASS,state=%s,dir=%s,d_cm=%ld,a=%ld,middle_a=%ld,stage=%u,turn_state=%s,start_rc=%d\r\n",
+        done ? "DONE," : "", BypassStateText(st.state), st.side ? "RIGHT" : "LEFT",
+        (long)st.distance_cm, (long)st.angle_deg, (long)(2 * st.angle_deg),
+        (unsigned)st.stage, TurnStateText(st.turn_state), st.start_rc);
     Cmd_Send(msg);
 }
 
@@ -423,7 +465,13 @@ static void NotifyPendingMotionDone(void)
 {
     char msg[192];
 
-    if (pending_motion == PENDING_MOTION_LATERAL)
+    if (pending_motion == PENDING_MOTION_BYPASS)
+    {
+        if (Bypass_State() == BYPASS_RUNNING) return;
+        if (!pending_motion_done_suppressed) SendBypassStatus(1U);
+        ClearPendingMotion();
+    }
+    else if (pending_motion == PENDING_MOTION_LATERAL)
     {
         if (Lateral_State() == LATERAL_RUNNING) return;
         if (!pending_motion_done_suppressed) SendLateralStatus(1U);
@@ -448,7 +496,7 @@ static void NotifyPendingMotionDone(void)
                  StraightStateText(state),
                  state == STRAIGHT_DONE ? "US_THRESHOLD" : StraightStateText(state),
                  (long)threshold, mm_text, valid,
-                 captured ? (direction > 0 ? "FORWARD" : direction < 0 ? "REVERSE" : "NONE") : "UNKNOWN",
+                 captured ? (direction > 0 ? "FORWARD" : direction < 0 ? "BACKWARD" : "NONE") : "UNKNOWN",
                  (unsigned long)age);
         Cmd_Send(msg);
         ClearPendingMotion();
@@ -694,7 +742,11 @@ static void SequenceLog_CaptureAfter(uint32_t index, pending_motion_t motion)
     sequence_log_capture_only = 1U;
     snprintf(msg, sizeof(msg), "LOG,AFTER,index=%lu\r\n", (unsigned long)index);
     Cmd_Send(msg);
-    if (motion == PENDING_MOTION_LATERAL)
+    if (motion == PENDING_MOTION_BYPASS)
+    {
+        SendBypassStatus(0U); HandleTurnStatus();
+    }
+    else if (motion == PENDING_MOTION_LATERAL)
     {
         SendLateralStatus(0U);
         HandleTurnStatus();
@@ -976,6 +1028,29 @@ static void HandleCalibrateCenter(void)
     Cmd_Send(msg);
 }
 
+static void HandleIRGet(uint8_t side)
+{
+    if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+    IRSensorDistanceReading reading;
+    int rc = IRSensor_ReadDistance(&reading, 1U);
+    char msg[128], cm[24];
+    const char *name = side ? "RIGHTIR" : "LEFTIR";
+    if (rc != 0)
+    {
+        snprintf(msg,sizeof(msg),"%s,cm=INVALID,raw=NA,mv=NA,status=ERROR,rc=%d\r\n",name,rc);
+        Cmd_Send(msg); return;
+    }
+    IRSensorRangeStatus range = side ? reading.right_status : reading.left_status;
+    uint32_t distance = side ? reading.right_cm_x10 : reading.left_cm_x10;
+    if (range == IR_RANGE_VALID)
+        snprintf(cm,sizeof(cm),"%lu.%lu",(unsigned long)(distance/10U),(unsigned long)(distance%10U));
+    else snprintf(cm,sizeof(cm),"%s",range == IR_RANGE_NEAR ? "NEAR" : range == IR_RANGE_FAR ? "FAR" : "INVALID");
+    snprintf(msg,sizeof(msg),"%s,cm=%s,raw=%u,mv=%u,status=%s,rc=0\r\n",name,cm,
+        (unsigned)(side ? reading.adc.right_raw : reading.adc.left_raw),
+        (unsigned)(side ? reading.adc.right_mv : reading.adc.left_mv),IRSensor_RangeText(range));
+    Cmd_Send(msg);
+}
+
 static void DispatchLine(char *line)
 {
     char *tok0;
@@ -983,6 +1058,9 @@ static void DispatchLine(char *line)
     char *tok2;
     char *tok3;
     char *tok4;
+    char *tok5;
+    char *tok6;
+    char *tok7;
 
     if (line == NULL || line[0] == '\0') return;
 
@@ -1000,6 +1078,9 @@ static void DispatchLine(char *line)
     tok2 = strtok(NULL, ",");
     tok3 = strtok(NULL, ",");
     tok4 = strtok(NULL, ",");
+    tok5 = strtok(NULL, ",");
+    tok6 = strtok(NULL, ",");
+    tok7 = strtok(NULL, ",");
 
     if (tok0 == NULL) return;
 
@@ -1035,6 +1116,12 @@ static void DispatchLine(char *line)
             snprintf(msg, sizeof(msg), "OK,SERVO,CENTER,%ld\r\n", (long)us);
             Cmd_Send(msg);
         }
+    }
+    else if (strcmp(tok0,"LEFTIR") == 0 || strcmp(tok0,"RIGHTIR") == 0)
+    {
+        if (tok1 && strcmp(tok1,"GET") == 0 && !tok2)
+            HandleIRGet(strcmp(tok0,"RIGHTIR") == 0);
+        else Cmd_Reject("ERR,BAD_ARGS");
     }
     else if (strcmp(tok0, "US") == 0 && tok1 != NULL &&
              strcmp(tok1, "GET") == 0 && tok2 == NULL)
@@ -1181,6 +1268,7 @@ static void DispatchLine(char *line)
     else if (strcmp(tok0, "STOP") == 0 && tok1 == NULL)
     {
         Lateral_Stop();
+        Bypass_Stop();
         Straight_Stop();
         Turn_Stop();
         MotionHeading_Reset();
@@ -1190,28 +1278,37 @@ static void DispatchLine(char *line)
     }
     else if (strcmp(tok0, "STRAIGHT") == 0)
     {
-        if (tok1 != NULL &&
-            (strcmp(tok1, "LEFTIR") == 0 || strcmp(tok1, "RIGHTIR") == 0) &&
-            tok2 != NULL && tok4 == NULL)
+        uint8_t explicit_direction = tok1 &&
+            (strcmp(tok1, "FORWARD") == 0 || strcmp(tok1, "BACKWARD") == 0);
+        const char *ir_side = explicit_direction ? tok2 : tok1;
+        const char *ir_op = explicit_direction ? tok3 : tok2;
+        const char *ir_value = explicit_direction ? tok4 : tok3;
+        const char *ir_extra = explicit_direction ? tok5 : tok4;
+        int8_t ir_direction = tok1 && strcmp(tok1, "BACKWARD") == 0 ? -1 : 1;
+        if (ir_side && (strcmp(ir_side, "LEFTIR") == 0 || strcmp(ir_side, "RIGHTIR") == 0) &&
+            ir_op && ir_extra == NULL)
         {
             int32_t cm;
             int rc;
             straight_ir_comparison_t comparison = STRAIGHT_IR_GT;
-            if (tok3 != NULL)
+            if (ir_value != NULL)
             {
-                if (strcmp(tok2, "LT") == 0) comparison = STRAIGHT_IR_LT;
-                else if (strcmp(tok2, "GT") != 0) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+                if (strcmp(ir_op, "LT") == 0) comparison = STRAIGHT_IR_LT;
+                else if (strcmp(ir_op, "RISING") == 0) comparison = STRAIGHT_IR_RISING;
+                else if (strcmp(ir_op, "FALLING") == 0) comparison = STRAIGHT_IR_FALLING;
+                else if (strcmp(ir_op, "GT") != 0) { Cmd_Reject("ERR,BAD_ARGS"); return; }
             }
-            if (!ParseIntStrict(tok3 != NULL ? tok3 : tok2, &cm)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (!ParseIntStrict(ir_value != NULL ? ir_value : ir_op, &cm)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
             if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
-            rc = Straight_StartUntilIRCm(cm, strcmp(tok1, "RIGHTIR") == 0, comparison);
+            rc = Straight_StartUntilIRDirectionCm(cm, strcmp(ir_side, "RIGHTIR") == 0, comparison, ir_direction);
             if (rc == 0)
             {
-                char msg[80];
+                char msg[96];
                 pending_motion = PENDING_MOTION_STRAIGHT;
                 pending_straight_cm = 0;
-                snprintf(msg, sizeof(msg), "OK,mode=%s,op=%s,threshold_cm=%ld\r\n", tok1,
-                         comparison == STRAIGHT_IR_LT ? "LT" : "GT", (long)cm);
+                snprintf(msg, sizeof(msg), "OK,mode=%s,op=%s,threshold_cm=%ld,dir=%s\r\n", ir_side,
+                         IRComparisonText(comparison), (long)cm,
+                         ir_direction > 0 ? "FORWARD" : "BACKWARD");
                 Cmd_Send(msg);
             }
             else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
@@ -1219,11 +1316,15 @@ static void DispatchLine(char *line)
             else if (rc == -4) Cmd_Reject("ERR,NOT_STILL");
             else Cmd_Reject("ERR,BUSY");
         }
-        else if (tok1 != NULL && strcmp(tok1, "UNTILUS") == 0 && tok2 != NULL && tok3 == NULL)
+        else if ((tok1 && strcmp(tok1, "UNTILUS") == 0 && tok2 && tok3 == NULL) ||
+                 (tok1 && (strcmp(tok1, "FORWARD") == 0 || strcmp(tok1, "BACKWARD") == 0) &&
+                  tok2 && strcmp(tok2, "UNTILUS") == 0 && tok3 && tok4 == NULL))
         {
             int32_t cm;
             int rc;
-            if (!ParseIntStrict(tok2, &cm))
+            int8_t direction = strcmp(tok1, "BACKWARD") == 0 ? -1 : 1;
+            const char *distance_arg = strcmp(tok1, "UNTILUS") == 0 ? tok2 : tok3;
+            if (!ParseIntStrict(distance_arg, &cm))
             {
                 Cmd_Reject("ERR,BAD_ARGS");
                 return;
@@ -1235,12 +1336,13 @@ static void DispatchLine(char *line)
             }
             /* Compare directly with the sensor distance reported by US,GET,
              * in either direction; no installation offset is added. */
-            rc = Straight_StartUntilUltrasonicCm(cm);
+            rc = Straight_StartUntilUltrasonicDirectionCm(cm, direction);
             if (rc == 0)
             {
-                char msg[80];
+                char msg[96];
                 pending_motion = PENDING_MOTION_UNTILUS;
-                snprintf(msg, sizeof(msg), "OK,mode=UNTILUS,threshold_cm=%ld\r\n", (long)cm);
+                snprintf(msg, sizeof(msg), "OK,mode=UNTILUS,threshold_cm=%ld,dir=%s\r\n", (long)cm,
+                         direction > 0 ? "FORWARD" : "BACKWARD");
                 Cmd_Send(msg);
             }
             else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
@@ -1264,6 +1366,33 @@ static void DispatchLine(char *line)
                 pending_straight_cm = cm;
                 snprintf(msg, sizeof(msg), "OK,mode=CAL,target_cm=%ld,servo_us=%ld,gyro_steering=0\r\n",
                          (long)cm, (long)servo_us);
+                Cmd_Send(msg);
+            }
+            else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
+            else if (rc == -2) Cmd_Reject("ERR,BAD_VALUE");
+            else if (rc == -4) Cmd_Reject("ERR,NOT_STILL");
+            else Cmd_Reject("ERR,BUSY");
+        }
+        else if (tok1 && strcmp(tok1, "GOCM") == 0 && tok2 && tok3 && tok4 && tok5 && !tok7)
+        {
+            int32_t cm, threshold;
+            straight_ir_comparison_t op;
+            if (strcmp(tok3,"LEFTIR") && strcmp(tok3,"RIGHTIR")) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (!strcmp(tok4,"GT")) op=STRAIGHT_IR_GT;
+            else if (!strcmp(tok4,"LT")) op=STRAIGHT_IR_LT;
+            else if (!strcmp(tok4,"RISING")) op=STRAIGHT_IR_RISING;
+            else if (!strcmp(tok4,"FALLING")) op=STRAIGHT_IR_FALLING;
+            else { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (!ParseIntStrict(tok2,&cm) || !ParseIntStrict(tok5,&threshold)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+            if (tok6 && (strcmp(tok6,"LATERAL") || (op != STRAIGHT_IR_RISING && op != STRAIGHT_IR_FALLING)))
+            { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            int rc = tok6 ? Lateral_StartAfterIREdge(cm,!strcmp(tok3,"RIGHTIR"),op,threshold)
+                          : Straight_StartCmThenIR(cm,!strcmp(tok3,"RIGHTIR"),op,threshold);
+            if (!rc) {
+                char msg[160]; pending_motion=tok6 ? PENDING_MOTION_LATERAL : PENDING_MOTION_STRAIGHT; pending_straight_cm=cm;
+                snprintf(msg,sizeof(msg),"OK,mode=%s,gocm_cm=%ld,ir=%s,op=%s,threshold_cm=%ld,dir=%s\r\n",
+                    tok6 ? "GOCM_IR_LATERAL" : "GOCM_IR",(long)cm,tok3,IRComparisonText(op),(long)threshold,cm<0?"BACKWARD":"FORWARD");
                 Cmd_Send(msg);
             }
             else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
@@ -1305,6 +1434,7 @@ static void DispatchLine(char *line)
         {
             uint8_t aborted = (Straight_State() == STRAIGHT_RUNNING) ? 1U : 0U;
             Lateral_Stop();
+            Bypass_Stop();
             Straight_Stop();
             if (!AnyMotionRunning()) MotionHeading_Reset();
             {
@@ -1326,6 +1456,33 @@ static void DispatchLine(char *line)
             Cmd_Reject("ERR,BAD_ARGS");
         }
     }
+    else if (strcmp(tok0, "BYPASS") == 0)
+    {
+        if (tok1 && strcmp(tok1, "STATUS") == 0 && tok2 == NULL) SendBypassStatus(0U);
+        else if (tok1 && strcmp(tok1, "STOP") == 0 && tok2 == NULL)
+        {
+            Bypass_Stop();
+            if (!AnyMotionRunning()) MotionHeading_Reset();
+            Cmd_SendLine("OK");
+        }
+        else if (tok1 && (strcmp(tok1, "LEFT") == 0 || strcmp(tok1, "RIGHT") == 0) &&
+                 tok2 && tok3 == NULL)
+        {
+            int32_t cm;
+            if (!ParseIntStrict(tok2, &cm)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+            int rc = Bypass_Start(strcmp(tok1, "RIGHT") == 0, cm);
+            if (rc == 0) {
+                pending_motion = PENDING_MOTION_BYPASS;
+                Cmd_SendLine("OK,BYPASS"); SendBypassStatus(0U);
+            }
+            else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
+            else if (rc == -2) Cmd_Reject("ERR,BAD_VALUE");
+            else if (rc == -4) Cmd_Reject("ERR,NOT_STILL");
+            else Cmd_Reject("ERR,BUSY");
+        }
+        else Cmd_Reject("ERR,BAD_ARGS");
+    }
     else if (strcmp(tok0, "LATERAL") == 0)
     {
         if (tok1 && strcmp(tok1, "STATUS") == 0 && tok2 == NULL)
@@ -1333,6 +1490,7 @@ static void DispatchLine(char *line)
         else if (tok1 && strcmp(tok1, "STOP") == 0 && tok2 == NULL)
         {
             Lateral_Stop();
+            Bypass_Stop();
             if (!AnyMotionRunning()) MotionHeading_Reset();
             Cmd_SendLine("OK");
         }
@@ -1404,6 +1562,7 @@ static void DispatchLine(char *line)
         {
             uint8_t aborted = (Turn_State() == TURN_RUNNING) ? 1U : 0U;
             Lateral_Stop();
+            Bypass_Stop();
             Turn_Stop();
             if (!AnyMotionRunning()) MotionHeading_Reset();
             {
@@ -1704,6 +1863,7 @@ static void DispatchReceivedLine(char *line)
         else if (strcmp(line, "PING") != 0 && strcmp(line, "STATUS") != 0 &&
                  strcmp(line, "STRAIGHT,STATUS") != 0 && strcmp(line, "TURN,STATUS") != 0 &&
                  strcmp(line, "LATERAL,STATUS") != 0 &&
+                 strcmp(line, "BYPASS,STATUS") != 0 &&
                  strcmp(line, "STRAIGHT,TRACE") != 0 &&
                  strcmp(line, "SEQ,LOG") != 0 &&
                  strcmp(line, "HEADING,STATUS") != 0)
@@ -1767,6 +1927,7 @@ static void CommandInterface_Init(void)
     Straight_Init();
     Turn_Init();
     Lateral_Init();
+    Bypass_Init();
     /* Normal UART and hardcoded runs hold each straight's starting direction.
      * Do not carry prior yaw error into the next straight or turn by default.
      * Gyro measurement, local straight PID and gyro-controlled turns remain on. */
@@ -1799,6 +1960,7 @@ static void CommandInterface_Poll(void)
     Straight_Step();
     Turn_Step();
     Lateral_Step();
+    Bypass_Step();
     GyroPollingStep();
     NotifyPendingMotionDone();
     while (RxRingPop(&rx_byte)) ProcessRxByte(rx_byte);   /* drain the ISR ring */
@@ -1813,6 +1975,7 @@ void CommandInterface_Run(void)
 static void Sequence_StopMotors(void)
 {
     Lateral_Stop();
+    Bypass_Stop();
     Straight_Stop();
     Turn_Stop();
     RobotHW_MotorStop();
@@ -1882,7 +2045,7 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
             uint32_t commas = 0U;
             for (size_t i = 0U; i < length; i++)
                 if (command[i] == ',') commas++;
-            if (commas > 3U) { failure = "BAD_ARGS"; break; }
+            if (commas > 6U) { failure = "BAD_ARGS"; break; }
         }
         if (emit_sequence_status)
         {
@@ -1927,6 +2090,8 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
                 failure = TurnStateText(Turn_State());
             else if (motion == PENDING_MOTION_LATERAL && Lateral_State() != LATERAL_DONE)
                 failure = LateralStateText(Lateral_State());
+            else if (motion == PENDING_MOTION_BYPASS && Bypass_State() != BYPASS_DONE)
+                failure = BypassStateText(Bypass_State());
             /* Includes motions completed immediately in their Start function. */
             NotifyPendingMotionDone();
             if (motion != PENDING_MOTION_NONE)

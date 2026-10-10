@@ -136,18 +136,22 @@
 #define US_MIN_THRESHOLD_CM              5
 #define US_MAX_THRESHOLD_CM              200
 #define US_CRUISE_PWM                    3500U
-#define US_APPROACH_PWM                  2600U
+#define US_APPROACH_PWM                  2400U
+#define US_FINAL_APPROACH_PWM            1800U
+#define US_FINAL_APPROACH_MARGIN_MM       200U
+/* Keep braking until both encoders stay quiet, with a bounded release time. */
+#define US_BRAKE_QUIET_MS                  60U
+#define US_BRAKE_MAX_MS                   600U
 /* Floor observation: both directions travel about 5 cm after the trigger. */
 #define US_FORWARD_STOP_LEAD_MM           50U
 #define US_REVERSE_STOP_LEAD_MM           50U
-#define US_ARRIVAL_TOLERANCE_MM           10U
+#define US_NEAR_START_PWM                2600U
 #define US_KICKSTART_PWM                 4000U
 #define US_KICKSTART_MIN_MS                120U
 #define US_KICKSTART_MAX_MS               400U
 #define US_KICKSTART_MIN_COUNTS             6
 #define US_START_CONFIRM_SAMPLES            2U
-#define US_START_UNKNOWN_SAMPLES            3U
-#define US_SLOW_MARGIN_MM                250U
+#define US_SLOW_MARGIN_MM                350U
 #define US_SPEED_HYSTERESIS_MM            50U
 #define US_PWM_SLEW_PER_SECOND           4200U
 
@@ -156,15 +160,16 @@
  * the lower final speed makes a small motor imbalance more visible. */
 #define US_PATH_SYNC_KP_PWM_PER_CM       80.0f
 
-/* Reject a single short ultrasonic echo as noise.  At the 60 ms sensor
- * cadence, two consecutive readings add little latency at approach speed. */
+/* Every threshold crossing needs consecutive, mutually consistent echoes. */
 #define US_STOP_CONFIRM_SAMPLES             2U
+#define US_STOP_CONFIRM_MAX_SPREAD_MM       50U
 /* Older readings become infinity; this is not a motion timeout. */
 #define US_SAMPLE_MAX_AGE_MS             200U
 #define US_MOTION_TIMEOUT_MS             30000U
 #define US_MAX_TRAVEL_CM                 200U
 
 /* Side IR commands: stop on strictly greater distance (FAR/failure = infinity). */
+#define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
 #define IR_COMMAND_CRUISE_PWM            3300U
 #define IR_COMMAND_KICK_PWM              4000U

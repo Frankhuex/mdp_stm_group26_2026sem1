@@ -47,6 +47,7 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     if (rounded < CMD_MIN_ANGLE_DEG || rounded > 90 || rounded > CMD_MAX_ANGLE_DEG) return -2;
     lc.side = side;
     lc.from_ir = from_ir;
+    lc.from_edge = 0U;
     lc.stage = from_ir ? 0U : 1U;
     lc.initial_ir_cm_x10 = initial_ir;
     lc.distance_cm_x10 = distance_cm_x10;
@@ -57,17 +58,50 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     lc.state = lc.start_rc == 0 ? LATERAL_RUNNING : LATERAL_START_ERROR;
     return lc.start_rc;
 }
+int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
+                             straight_ir_comparison_t comparison, int32_t threshold_cm)
+{
+    if (lc.state == LATERAL_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
+        Turn_State() == TURN_RUNNING) return -3;
+    if (side > 1U || (comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING)) return -2;
+    int rc = Straight_StartCmThenIR(distance_cm, side, comparison, threshold_cm);
+    if (rc) return rc;
+    lateral_status_t empty = {0}; lc = empty;
+    lc.side = side; lc.from_ir = lc.from_edge = 1U; lc.stage = 0U;
+    lc.state = LATERAL_RUNNING; lc.straight_state = Straight_State();
+    return 0;
+}
+
 void Lateral_Step(void)
 {
     if (lc.state != LATERAL_RUNNING) return;
     if (lc.stage == 0U)
     {
         lc.straight_state = Straight_State();
+        if (lc.from_edge) {
+            uint32_t first;
+            if (Straight_IRFirstEdgeReading(&first)) {
+                lc.initial_ir_cm_x10 = first;
+                lc.distance_cm_x10 = first + LATERAL_OBSTACLE_WIDTH_CM * 5U + LATERAL_IR_TO_CENTER_CM * 10U;
+            }
+        }
         if (lc.straight_state == STRAIGHT_RUNNING) return;
         if (lc.straight_state != STRAIGHT_DONE)
         {
             lc.state = lc.straight_state == STRAIGHT_ABORTED ? LATERAL_ABORTED : LATERAL_STRAIGHT_ERROR;
             return;
+        }
+        if (lc.from_edge) {
+            float sum = CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM;
+            if (!lc.initial_ir_cm_x10 || !lc.distance_cm_x10 || lc.distance_cm_x10 > sum * 10.0f) {
+                lc.start_rc = lc.initial_ir_cm_x10 ? -2 : -5;
+                lc.state = LATERAL_START_ERROR; return;
+            }
+            lc.angle_deg = (int32_t)lroundf(acosf(1.0f - lc.distance_cm_x10 / (sum * 10.0f)) *
+                (180.0f / 3.14159265358979323846f));
+            if (lc.angle_deg < CMD_MIN_ANGLE_DEG || lc.angle_deg > 90) {
+                lc.start_rc = -2; lc.state = LATERAL_START_ERROR; return;
+            }
         }
         lc.stage = 1U;
         lc.start_rc = StartArc(lc.side);

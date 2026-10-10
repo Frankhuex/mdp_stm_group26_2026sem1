@@ -70,18 +70,14 @@ library. The test simulates STRAIGHT and TURN and checks geometry, side selectio
 measurement/offset, approach-before-turn order, limits, busy handling, STOP and
 straight/turn/start failures.
 
-## Bidirectional UNTILUS
+## Explicit-direction UNTILUS
 
-`STRAIGHT,UNTILUS,n` compares directly with sensor distance (`US,GET`), without
-an installation offset. Integer n is 5..200. Two fresh initial samples within
-±1 cm complete without driving; otherwise confirmed samples select direction.
-Forward brakes at target + lead and reverse at target − lead after two valid
-confirmations. Both lead settings are initially 5 cm from floor observations,
-capped at half the initial target error for small corrections. Starts within
-25 cm use PWM 2600 instead of 4000. Approach speed reduction is immediate;
-acceleration remains slew-limited. Brake duration is 150 ms. These initial
-lead estimates require floor retesting after the speed change.
-
-Missing initial measurements fault without moving. STOP, timeout and travel
-limits remain active. Successful DONE retains the pre-brake condition sample,
-with direction and its age at detection; live status retains freshness checks.
+`STRAIGHT,UNTILUS,n` defaults to forward. Explicit forms are
+`STRAIGHT,FORWARD,UNTILUS,n` and `STRAIGHT,BACKWARD,UNTILUS,n`, with n=5..200 cm.
+Direction remains fixed. Two consistent initial readings already below the
+forward target or above the backward target complete without moving. During
+motion the existing 5 cm early-brake strategy and two-sample confirmation remain.
+Invalid/missing echoes start or continue 1800 PWM creep in the requested direction;
+recovered valid readings resume control. Hardware initialization/trigger and gyro
+faults, stall, STOP, 30-second timeout and 200 cm travel limit remain active.
+See the bilingual protocol for speed and encoder-confirmed brake details.
