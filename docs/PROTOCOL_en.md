@@ -17,7 +17,7 @@
 
 - Uppercase ASCII, comma-separated, without spaces between fields.
 - Requests end with `\r\n`, standalone `\r`, or `\n`; responses end with `\r\n`.
-- The 128-byte RX buffer accepts at most 127 payload bytes, excluding the terminator. Overflow emits `ERR,RX_LINE_OVERFLOW` and discards input until the next line ending.
+- The 512-byte RX buffer accepts at most 511 payload bytes, excluding the terminator. Each individual command remains limited to 127 bytes. Overflow emits `ERR,RX_LINE_OVERFLOW` and discards input until the next line ending.
 - Empty fields, integer overflow and unparseable numbers return `ERR,BAD_ARGS`; values outside a command's range return `ERR,BAD_VALUE`.
 - Currently `CMD_ECHO_ENABLE=0`: STM does not echo input. Enable PuTTY local echo if typed characters should be visible.
 - Numeric telemetry generally uses signed three-decimal formatting, such as `+12.340`; target centimeters, angles and ultrasonic millimeters are integers.
@@ -42,6 +42,14 @@
 | `IR_MEASUREMENT_INVALID` | LATERAL initial selected-side IR is unavailable or outside calibration |
 
 `TIMEOUT`, `SENSOR_ERROR` and `DISTANCE_LIMIT` are motion terminal states in completion/status messages, not standalone `ERR` reasons emitted by this interface.
+
+### Multiple commands in one line
+
+Separate commands with semicolons, for example `FAST,APPROACH;STRAIGHT,GOCM,30;LEFTIR,GET`. The batch uses the existing sequence executor, waiting for each managed motion to finish before dispatching the next command. FAST groups are supported; `WAIT,<ms>` inserts a 0..60000 ms delay. Queries return immediately. There is no extra startup or inter-command delay.
+
+Acceptance is `OK,batch=<count>`. Individual command replies remain visible, followed by `DONE,BATCH,state=DONE,count=<count>` on success, or `DONE,BATCH,state=<reason>,index=<1-based failed step>,count=<count>` on failure. A rejected command or failed motion stops the remaining commands. Send global `STOP` on a separate line to cancel; permitted status queries remain available and other incoming commands return BUSY while the batch runs.
+
+Maximum 16 commands and 511 total payload bytes; each command is at most 127 bytes and 7 comma-separated fields. Spaces/tabs around each command are trimmed, but spaces inside command fields remain unsupported. Leading/trailing semicolons and empty segments return BAD_ARGS before execution. Oversized segments, excess commands or excess fields also reject the whole batch before execution; other argument errors are reported when their step executes. A single command without a semicolon retains its normal behavior.
 
 ## 3. Straight Commands
 
@@ -283,6 +291,7 @@ mode still auto-starts its array; it does not become a UART-triggered task.
 | `MOTOR,B,<l>,<r>` | `OK`; set both wheels |
 | `STEER,US,<us>` | `OK`; raw servo compare value, no software range clamp |
 | `STEER,CENTER` | `OK`; shared center 1725 µs (robot_tuning.h) |
+| `SERVO,SETCENTER,<us>` | Integer microseconds strictly between the configured endpoints (currently 1000 < us < 2600). Updates the shared runtime centre and positions the servo using backlash take-up; replies `OK,SERVO,SETCENTER,<us>`. Motion returns BUSY. `SERVO,CENTER,<us>` remains an alias with its original reply. Read back with `STEER,GET`; resets to the compile-time default on restart. Straight direction trims still apply. |
 | `STEER,GET` | `STEER,us=<int>,center=<int>` |
 | `ENC,RESET` | `OK`; reset encoders |
 | `ENC,GET` | `ENC,l=<int>,r=<int>`; forward-normalized counts |

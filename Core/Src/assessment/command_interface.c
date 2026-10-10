@@ -21,6 +21,8 @@
 extern UART_HandleTypeDef huart3;
 
 #define CMD_LINE_SIZE          128U
+#define CMD_RX_LINE_SIZE       512U
+#define CMD_BATCH_MAX_COMMANDS 16U
 #define CMD_RX_TIMEOUT_MS      10U
 #define CMD_ECHO_ENABLE        0U
 
@@ -30,7 +32,7 @@ extern UART_HandleTypeDef huart3;
  * ERR,UNKNOWN_CMD, typically on the first command after an idle gap. The RXNE
  * interrupt captures every byte into this ring regardless of main-loop timing,
  * and clears overrun; the main loop just drains the ring. */
-#define RX_RING_SIZE 512U
+#define RX_RING_SIZE 1024U
 static volatile uint8_t rx_ring[RX_RING_SIZE];
 static volatile uint16_t rx_ring_head = 0U;
 static volatile uint16_t rx_ring_tail = 0U;
@@ -76,7 +78,9 @@ static uint32_t sequence_log_used, sequence_log_dropped;
 static uint8_t sequence_log_active, sequence_log_capture_only;
 static const char *sequence_log_result = "EMPTY";
 
-static char rx_line[CMD_LINE_SIZE];
+static char rx_line[CMD_RX_LINE_SIZE];
+/* Separate storage survives recursive UART polling while the batch runs. */
+static char inline_batch_line[CMD_RX_LINE_SIZE];
 static uint32_t rx_line_len = 0U;
 static uint8_t previous_byte = 0U;
 static uint8_t rx_discard = 0U;
@@ -122,7 +126,7 @@ static const char *const fast_left1_commands[] =
 static const char *const fast_left2_commands[] =
 {
     "TURN,LEFT,R=35,A=90",
-    // "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
+    "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
     "STRAIGHT,RIGHTIR,GT,30",
     "TURN,RIGHT,R=35,A=180",
     "STRAIGHT,RIGHTIR,RISING,50",
@@ -147,7 +151,7 @@ static const char *const fast_right1_commands[] =
 static const char *const fast_right2_commands[] =
 {
     "TURN,RIGHT,R=35,A=90",
-    // "STRAIGHT,BACKWARD,LEFTIR,LT,30",
+    "STRAIGHT,BACKWARD,LEFTIR,LT,30",
     "STRAIGHT,LEFTIR,GT,30",
     "TURN,LEFT,R=35,A=180",
     "STRAIGHT,LEFTIR,RISING,50",
@@ -1101,25 +1105,24 @@ static void DispatchLine(char *line)
     {
         HandleCalibrateCenter();
     }
-    else if (strcmp(tok0, "SERVO") == 0 && tok1 != NULL &&
-             strcmp(tok1, "CENTER") == 0 && tok2 != NULL && tok3 == NULL)
+    else if (strcmp(tok0, "SERVO") == 0)
     {
-        /* Manually set the straight-ahead servo centre (us) and apply it live,
-         * for bisecting the centre by hand. Persist by setting SERVO_CENTER_US. */
+        if (!tok1 || (strcmp(tok1, "SETCENTER") != 0 && strcmp(tok1, "CENTER") != 0) ||
+            !tok2 || tok3)
+        { Cmd_Reject("ERR,BAD_ARGS"); return; }
         int32_t us;
-        if (!ParseIntStrict(tok2, &us) ||
-            us <= (int32_t)CMD_SERVO_LEFT_US || us >= (int32_t)CMD_SERVO_RIGHT_US)
-        {
-            Cmd_Reject("ERR,BAD_VALUE");
-        }
-        else
-        {
-            RobotHW_ServoSetCenterUs((uint32_t)us);
-            RobotHW_ServoCenter();
-            char msg[48];
-            snprintf(msg, sizeof(msg), "OK,SERVO,CENTER,%ld\r\n", (long)us);
-            Cmd_Send(msg);
-        }
+        if (!ParseIntStrict(tok2, &us))
+        { Cmd_Reject("ERR,BAD_ARGS"); return; }
+        if (us <= (int32_t)CMD_SERVO_LEFT_US || us >= (int32_t)CMD_SERVO_RIGHT_US)
+        { Cmd_Reject("ERR,BAD_VALUE"); return; }
+        if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+        /* Runtime override shared with automatic centre calibration. */
+        MotionHeading_Reset();
+        RobotHW_ServoSetCenterUs((uint32_t)us);
+        RobotHW_ServoCenter();
+        char msg[64];
+        snprintf(msg, sizeof(msg), "OK,SERVO,%s,%ld\r\n", tok1, (long)us);
+        Cmd_Send(msg);
     }
     else if (strcmp(tok0,"LEFTIR") == 0 || strcmp(tok0,"RIGHTIR") == 0)
     {
@@ -1864,6 +1867,52 @@ static void DispatchLine(char *line)
     }
 }
 
+/* Split without strtok: the normal command parser owns its strtok state. */
+static uint8_t SplitInlineCommands(char *line, const char *commands[], uint32_t *count)
+{
+    char *part = line;
+    *count = 0U;
+    for (;;)
+    {
+        char *separator = strchr(part, ';');
+        if (separator) *separator = '\0';
+        while (*part == ' ' || *part == '\t') part++;
+        char *end = part + strlen(part);
+        while (end > part && (end[-1] == ' ' || end[-1] == '\t')) *--end = '\0';
+        if (end == part || (size_t)(end - part) >= CMD_LINE_SIZE ||
+            *count >= CMD_BATCH_MAX_COMMANDS) return 0U;
+        uint32_t commas = 0U;
+        for (char *p = part; *p; p++) if (*p == ',') commas++;
+        if (commas > 6U) return 0U;
+        commands[(*count)++] = part;
+        if (!separator) return 1U;
+        part = separator + 1;
+    }
+}
+
+static void DispatchInlineBatch(char *line)
+{
+    const char *commands[CMD_BATCH_MAX_COMMANDS];
+    uint32_t count, failure_index;
+    char msg[112];
+    if (sequence_mode || AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+    size_t length = strlen(line);
+    if (length >= sizeof(inline_batch_line)) { Cmd_Reject("ERR,RX_LINE_OVERFLOW"); return; }
+    memcpy(inline_batch_line, line, length + 1U);
+    if (!SplitInlineCommands(inline_batch_line, commands, &count))
+    { Cmd_Reject("ERR,BAD_ARGS"); return; }
+    snprintf(msg, sizeof(msg), "OK,batch=%lu\r\n", (unsigned long)count);
+    Cmd_Send(msg);
+    const char *failure = CommandInterface_RunSequenceRows(commands, count,
+        0U, 0U, 0U, 0U, 0U, &failure_index, NULL);
+    if (failure)
+        snprintf(msg, sizeof(msg), "DONE,BATCH,state=%s,index=%lu,count=%lu\r\n",
+                 failure, (unsigned long)failure_index, (unsigned long)count);
+    else
+        snprintf(msg, sizeof(msg), "DONE,BATCH,state=DONE,count=%lu\r\n", (unsigned long)count);
+    Cmd_Send(msg);
+}
+
 static void DispatchReceivedLine(char *line)
 {
     if (sequence_mode)
@@ -1882,7 +1931,9 @@ static void DispatchReceivedLine(char *line)
             return;
         }
     }
-    DispatchLine(line);
+    if (strchr(line, ';')) DispatchInlineBatch(line);
+    else if (strlen(line) >= CMD_LINE_SIZE) Cmd_Reject("ERR,BAD_ARGS");
+    else DispatchLine(line);
 }
 
 static void ProcessRxByte(uint8_t b)
@@ -1912,14 +1963,15 @@ static void ProcessRxByte(uint8_t b)
         if (rx_line_len > 0U)
         {
             rx_line[rx_line_len] = '\0';
-            DispatchReceivedLine(rx_line);
+            /* A sequence polls UART recursively: start the next RX line before dispatch. */
             rx_line_len = 0U;
+            DispatchReceivedLine(rx_line);
         }
         return;
     }
 
     if (rx_discard) return;
-    if (rx_line_len < (CMD_LINE_SIZE - 1U))
+    if (rx_line_len < (CMD_RX_LINE_SIZE - 1U))
     {
         rx_line[rx_line_len++] = (char)b;
     }
