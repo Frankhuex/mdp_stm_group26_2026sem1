@@ -274,8 +274,28 @@ static void test_gocm_ir(void)
     assert(Straight_StartCmThenIR(10,2,STRAIGHT_IR_GT,30)==-2);
     puts("PASS: continuous GOCM+IR both gears/sides/operators, no pre-gate reads/brake, exact encoder gate, bounds/STOP/timeout/travel limit");
 }
+static void test_ir_low_speed(void)
+{
+    for (int dir=-1; dir<=1; dir+=2)
+        for (uint8_t side=0; side<2; side++)
+            for (int op=STRAIGHT_IR_GT; op<=STRAIGHT_IR_FALLING; op++)
+                for (int gated=0; gated<2; gated++) {
+                    reset(); ir.left_status=ir.right_status=IR_RANGE_VALID;
+                    ir.left_cm_x10=ir.right_cm_x10=300; /* equality keeps every op running */
+                    int rc=gated ? Straight_StartCmThenIR(dir*10,side,op,30)
+                                 : Straight_StartUntilIRDirectionCm(30,side,op,dir);
+                    assert(rc==0);
+                    if (gated) { assert(last_left_pwm>1800); encoder_delta=744; step(); encoder_delta=0; }
+                    assert(last_left_pwm==1800 && last_right_pwm==1800);
+                    for (int i=0; i<5; i++) { step(); assert(last_left_pwm==1800 && last_right_pwm==1800); }
+                    assert(Straight_State()==STRAIGHT_RUNNING); Straight_Stop();
+                }
+    puts("PASS: all IR gears/sides/operators use low speed at startup and GOCM gate");
+}
+
 int main(void)
 {
+    test_ir_low_speed();
     test_untilus_bidirectional();
     test_ir_edges();
     test_gocm_ir();

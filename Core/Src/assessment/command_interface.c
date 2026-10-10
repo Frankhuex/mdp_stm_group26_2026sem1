@@ -118,12 +118,12 @@ static const char *const fast_left1_commands[] =
 static const char *const fast_left2_commands[] =
 {
     "TURN,LEFT,R=35,A=90",
-    "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
+    // "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
     "STRAIGHT,RIGHTIR,GT,30",
     "TURN,RIGHT,R=35,A=180",
     "STRAIGHT,RIGHTIR,RISING,50",
     "TURN,RIGHT,R=35,A=90",
-	"STRAIGHT,GOCM,30,RIGHTIR,RISING,50,LATERAL",
+	"STRAIGHT,GOCM,50,RIGHTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,15",
 };
 static const char *const fast_right1_commands[] =
@@ -143,12 +143,12 @@ static const char *const fast_right1_commands[] =
 static const char *const fast_right2_commands[] =
 {
     "TURN,RIGHT,R=35,A=90",
-    "STRAIGHT,BACKWARD,LEFTIR,LT,30",
+    // "STRAIGHT,BACKWARD,LEFTIR,LT,30",
     "STRAIGHT,LEFTIR,GT,30",
     "TURN,LEFT,R=35,A=180",
     "STRAIGHT,LEFTIR,RISING,50",
     "TURN,LEFT,R=35,A=90",
-	"STRAIGHT,GOCM,30,LEFTIR,RISING,50,LATERAL",
+	"STRAIGHT,GOCM,50,LEFTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,15",
 };
 

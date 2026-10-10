@@ -158,7 +158,7 @@ DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT|RISING|FALLING>,state=<S>,threshol
 - Integer thresholds: LEFTIR 10..50 cm, RIGHTIR 10..60 cm, matching the current calibration tables.
 - FAR, ADC acquisition failure and conversion error count as infinity and complete normally with `state=DONE,ir_cm=FAR`. They do not raise an IR sensor fault.
 - Read before applying drive power; an already-satisfied condition completes without driving. While moving, sample approximately every 40 ms; two consecutive qualifying samples are required. If the initial GT/LT condition already holds, confirmation occurs 40 ms apart while stationary before drive is applied.
-- Initial PWM 4000 for 120 ms, then 3300, with global scaling and normal straight steering/wheel synchronization.
+- All active IR comparison stages use base PWM 1800 from startup, with global scaling and normal straight steering/wheel synchronization. This covers both gears, both sensors, GT/LT/RISING/FALLING, and commands with or without GOCM/LATERAL. GOCM retains its normal profile before the IR gate and reduces PWM immediately at the gate.
 - STOP gives ABORTED; 30 seconds gives TIMEOUT; either wheel reaching 200 cm gives DISTANCE_LIMIT. Gyro failure can still give SENSOR_ERROR. These failures stop the sequence.
 - In a hardcoded sequence, normal completion (including FAR/ADC failure) advances to the next row.
 

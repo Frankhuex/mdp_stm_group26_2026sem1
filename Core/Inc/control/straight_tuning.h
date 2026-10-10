@@ -171,9 +171,8 @@
 /* Side IR commands: stop on strictly greater distance (FAR/failure = infinity). */
 #define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
-#define IR_COMMAND_CRUISE_PWM            3300U
-#define IR_COMMAND_KICK_PWM              4000U
-#define IR_COMMAND_KICK_MS               120U
+/* All active IR comparisons use low speed, including startup and gated entry. */
+#define IR_COMMAND_DETECT_PWM            1800U
 #define IR_COMMAND_TIMEOUT_MS           30000U
 #define IR_COMMAND_MAX_TRAVEL_CM         200U
 

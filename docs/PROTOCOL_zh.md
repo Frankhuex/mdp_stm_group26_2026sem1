@@ -134,7 +134,7 @@ DONE,STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT|RISING|FALLING>,state=<S>,threshol
 - 阈值为整数厘米：LEFTIR 支持 10～50，RIGHTIR 支持 10～60，与当前标定表一致。
 - `FAR`、ADC 读取失败和转换错误均按无限远处理，正常回报 `state=DONE,ir_cm=FAR`，不作为 IR 传感器故障。
 - 起步前先采样，已满足条件则直接完成而不驱动车轮。行驶时约每 40 ms 采样一次，一次满足即可停车。
-- 起步 PWM 4000，持续 120 ms，之后巡航 3300；仍使用全局 PWM 比例和直行方向／左右轮同步控制。
+- 所有启用 IR 比较的阶段从起步起统一使用基础 PWM 1800，涵盖前后方向、左右探头、GT/LT/RISING/FALLING，以及有无 GOCM／LATERAL 的组合；仍使用全局 PWM 比例和直行方向／左右轮同步控制。GOCM 前段沿用原速度曲线，到达 IR 检测切换点立即降速。
 - STOP 返回 ABORTED；30 秒超时返回 TIMEOUT；任一轮行程达到 200 cm 返回 DISTANCE_LIMIT；陀螺仪故障仍可返回 SENSOR_ERROR。这些非成功终态会中止序列。
 - 硬编码执行器收到正常 DONE 后进入下一行，包含 FAR／ADC 失败触发的正常完成。
 

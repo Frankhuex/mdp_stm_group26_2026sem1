@@ -616,7 +616,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
         if (result)
             FinishIR(result == 2U ? STRAIGHT_SENSOR_ERROR : STRAIGHT_DONE);
         else
-            Command_MotorSet(sc_dir, IR_COMMAND_KICK_PWM, IR_COMMAND_KICK_PWM);
+            Command_MotorSet(sc_dir, IR_COMMAND_DETECT_PWM, IR_COMMAND_DETECT_PWM);
     }
     else if (sc_profile == STRAIGHT_PROFILE_SHORT)
         Command_MotorSet(sc_dir, SHORT_KICKSTART_PWM, SHORT_KICKSTART_PWM);
@@ -1199,8 +1199,7 @@ static void Straight_StepInternal(void)
     }
     else if (sc_ir_mode && sc_ir_active)
     {
-        force_equal_kick = elapsed_ms < IR_COMMAND_KICK_MS;
-        base_pwm = force_equal_kick ? IR_COMMAND_KICK_PWM : IR_COMMAND_CRUISE_PWM;
+        base_pwm = IR_COMMAND_DETECT_PWM;
     }
     else if (sc_profile == STRAIGHT_PROFILE_SHORT)
     {
