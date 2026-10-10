@@ -260,6 +260,7 @@ Every reply below ends with `\r\n`. `<f>` denotes three-decimal numeric formatti
 | `PING` | `PONG` |
 | `UPTIME` | `UPTIME,ms=<int>` |
 | `LOOP,ONCE` | Runs one offset assessment loop: `TURN,RIGHT,R=35,A=90`, `STRAIGHT,GOCM,40`, `TURN,LEFT,R=20,A=180`, `STRAIGHT,UNTILUS,47`; emits one `OK` and one final `DONE,LOOP` line |
+| `FAST,APPROACH` | Executes only `STRAIGHT,UNTILUS,28` (default FORWARD); returns `OK,fast=APPROACH,count=1` and `DONE,FAST,route=APPROACH,state=DONE,count=1` on success |
 | `FAST,LEFT1` / `FAST,RIGHT1` | Runs the corresponding 6-command fastest-car group from test_hardcode_command_executor.c |
 | `FAST,LEFT2` / `FAST,RIGHT2` | Runs the corresponding 12-command fastest-car group from test_hardcode_command_executor.c |
 

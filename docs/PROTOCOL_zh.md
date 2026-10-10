@@ -260,7 +260,7 @@ LEFT 先左转后右转，RIGHT 先右转后左转。左转采用 20 cm 软限�
 
 ### FAST 最快车分组命令
 
-支持 `FAST,LEFT1`、`FAST,LEFT2`、`FAST,RIGHT1`、`FAST,RIGHT2`。
+支持 `FAST,APPROACH`、`FAST,LEFT1`、`FAST,LEFT2`、`FAST,RIGHT1`、`FAST,RIGHT2`。APPROACH 当前仅执行 `STRAIGHT,UNTILUS,28`（默认前进），接受回报 `OK,fast=APPROACH,count=1`，成功回报 `DONE,FAST,route=APPROACH,state=DONE,count=1`；BUSY、STOP 和失败处理沿用其他 FAST 命令组。
 它们分别执行 `test_hardcode_command_executor.c` 中同名分组的动作，
 LEFT1／RIGHT1 各 6 条，LEFT2／RIGHT2 各 12 条。
 

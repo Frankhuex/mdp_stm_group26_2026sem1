@@ -101,6 +101,10 @@ static const char *const loop_once_commands[] =
 
 /* Fastest-car groups from test_hardcode_command_executor.c.
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
+static const char *const fast_approach_commands[] =
+{
+    "STRAIGHT,UNTILUS,28",
+};
 static const char *const fast_left1_commands[] =
 {
     // "LATERAL,LEFT,25",
@@ -1196,7 +1200,13 @@ static void DispatchLine(char *line)
             Cmd_Reject("ERR,BAD_ARGS");
             return;
         }
-        if (strcmp(tok1, "LEFT1") == 0)
+        if (strcmp(tok1, "APPROACH") == 0)
+        {
+            commands = fast_approach_commands;
+            route = "APPROACH";
+            count = sizeof(fast_approach_commands) / sizeof(fast_approach_commands[0]);
+        }
+        else if (strcmp(tok1, "LEFT1") == 0)
         {
             commands = fast_left1_commands;
             route = "LEFT1";
