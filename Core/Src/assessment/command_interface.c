@@ -1944,7 +1944,7 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
                      (unsigned long)(index + 1U));
             Cmd_Send(msg);
         }
-        if ((GYRO_RECALIBRATE_BEFORE_EACH_COMMAND || observer != NULL) &&
+        if ((SEQUENCE_COMMAND_GAP_ENABLE || observer != NULL) &&
             index + 1U < count && !Sequence_Wait(gap_ms))
         {
             failure = "USER_STOP";

@@ -276,11 +276,11 @@ static uint8_t RobotHW_WaitForStill(void)
 
 int RobotHW_PrepareMotionSensors(void)
 {
-    if (GYRO_RECALIBRATE_BEFORE_EACH_COMMAND || !RobotHW_GyroHasOffset())
-    {
+    uint8_t need_calibration = GYRO_RECALIBRATE_BEFORE_EACH_COMMAND || !RobotHW_GyroHasOffset();
+    if (need_calibration || MOTION_PREPARE_STOP_ENABLE || MOTION_STILL_CHECK_ENABLE)
         RobotHW_MotorStop();
+    if (need_calibration || MOTION_STILL_CHECK_ENABLE)
         if (!RobotHW_WaitForStill()) return -4;
-    }
 
     if (!RobotHW_GyroIsInitialized() && !RobotHW_GyroInit()) return -1;
 

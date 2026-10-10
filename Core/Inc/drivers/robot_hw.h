@@ -48,7 +48,8 @@ void RobotHW_EncoderReset(void);
 RobotHW_EncoderSnapshot RobotHW_EncoderSnapshotRead(void);
 RobotHW_EncoderDelta RobotHW_EncoderDeltaRead(RobotHW_EncoderSnapshot *previous);
 
-/* On first use or with GYRO_RECALIBRATE_BEFORE_EACH_COMMAND enabled, stops
+/* First-use/repeat calibration always stops and checks stillness. Independent
+ * preparation-stop/still-check switches can also request these steps. Stops
  * motors, confirms stillness and calibrates bias; otherwise reuses bias. Then
  * zeros encoder/yaw state for a new motion. Returns 0 on success,
  * -1 when the IMU is unavailable and -4 when the chassis did not become still. */

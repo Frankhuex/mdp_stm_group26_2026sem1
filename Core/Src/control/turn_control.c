@@ -792,11 +792,24 @@ static float tc_target_abs_deg = 0.0f;
 static uint32_t tc_start_tick = 0U;
 static uint32_t tc_last_tick = 0U;
 static uint32_t tc_phase_tick = 0U;
+static uint32_t tc_servo_wait_ms;
 /* 0=initial settle, 1=drive, 2=post-brake settle, 3=brake,
  * 4=right return at 1500 us, 5=right return at centre. */
 static uint8_t tc_phase = 0U;
 static uint8_t tc_gyro_fail_count = 0U;
 static float tc_stop_rate_dps = 0.0f;
+
+static uint32_t Command_ServoWaitMs(uint32_t previous_us, uint32_t target_us)
+{
+    uint32_t delta = previous_us > target_us ? previous_us - target_us : target_us - previous_us;
+    uint32_t span = CMD_SERVO_RIGHT_US - CMD_SERVO_LEFT_US;
+    if (delta > span) delta = span;
+    uint32_t travel_ms = TURN_SERVO_WAIT_FULL_SPAN_MS - TURN_SERVO_WAIT_MIN_MS;
+    /* Round up; invalid/out-of-range previous commands receive maximum wait. */
+    if (previous_us < CMD_SERVO_LEFT_US || previous_us > CMD_SERVO_RIGHT_US)
+        return TURN_SERVO_WAIT_FULL_SPAN_MS;
+    return TURN_SERVO_WAIT_MIN_MS + (uint32_t)(((uint64_t)delta * travel_ms + span - 1U) / span);
+}
 
 static uint8_t Command_IsShortRight(void)
 {
@@ -916,7 +929,7 @@ int Turn_StartRadiusAngle(int32_t radius_cm, int32_t angle_deg, int8_t turn_dir)
 
     MotionHeading_Prepare();
 
-    if (GYRO_RECALIBRATE_BEFORE_EACH_COMMAND)
+    if (MOTION_PREPARE_STOP_ENABLE)
     {
         Motor_Stop();
         Servo_SetPulse(SERVO_CENTER_US);
@@ -958,8 +971,13 @@ int Turn_StartRadiusAngle(int32_t radius_cm, int32_t angle_deg, int8_t turn_dir)
     tc_phase = 0U;
     tc_state = TURN_RUNNING;
 
-    if (GYRO_RECALIBRATE_BEFORE_EACH_COMMAND) Motor_Stop();
+    if (MOTION_PREPARE_STOP_ENABLE) Motor_Stop();
+    else RobotHW_MotorBrakeRelease(); /* Zero drive outputs during steering wait. */
+    tc_servo_wait_ms = Command_ServoWaitMs(RobotHW_ServoGetUs(), (uint32_t)pulse);
     Servo_SetPulse((uint32_t)pulse);
+    /* Start timing after preparation stops and the actual servo command. */
+    tc_phase_tick = HAL_GetTick();
+    tc_last_tick = tc_phase_tick;
     return 0;
 }
 
@@ -972,31 +990,21 @@ static void Command_CompleteTurn(void)
 
 static void Command_BeginPostTurnActions(void)
 {
-    /* Preserve the measured turn result for TURN,STATUS. Heading resets
-     * below intentionally discard route error for the next command. */
-    yaw_after_settle_deg = yaw_deg;
-    if (!GYRO_RECALIBRATE_BEFORE_EACH_COMMAND)
+    yaw_after_settle_deg = yaw_deg; /* Preserve measured turn result. */
+    if (TURN_END_HEADING_RESET_ENABLE) MotionHeading_Reset();
+    if (tc_turn_dir == CMD_TURN_RIGHT && TURN_RIGHT_RETURN_ENABLE)
     {
-        /* Fast mode: braking already released and steering is centred.
-         * Skip side-specific steering holds and heading resets. */
-        Command_CompleteTurn();
-        return;
-    }
-    if (tc_turn_dir == CMD_TURN_RIGHT)
-    {
-        /* Match manual STEER,US: clear history, preserve ON/OFF mode. */
-        MotionHeading_Reset();
         Servo_SetPulse(TURN_RIGHT_RECENTER_US);
         tc_phase = 4U;
         tc_phase_tick = HAL_GetTick();
+        return;
     }
-    else
+    if (tc_turn_dir == CMD_TURN_LEFT && TURN_LEFT_HEADING_OFF_ENABLE)
     {
-        /* Match HEADING,OFF, including its sensor-frame reset. */
         MotionHeading_SetEnabled(0U);
         RobotHW_YawReset();
-        Command_CompleteTurn();
     }
+    Command_CompleteTurn();
 }
 
 void Turn_Step(void)
@@ -1059,12 +1067,11 @@ void Turn_Step(void)
 
     if (tc_phase == 0U)
     {
-        if (!GYRO_RECALIBRATE_BEFORE_EACH_COMMAND ||
-            (now - tc_phase_tick) >= SERVO_SETTLE_MS)
+        if ((now - tc_phase_tick) >= tc_servo_wait_ms)
         {
             uint32_t initial_pwm = TURN_KICKSTART_PWM;
 
-            /* Establish zero at drive start; fast mode skips servo settling. */
+            /* Establish zero after the always-enabled steering wait. */
             RobotHW_GyroPrimeFilter(GYRO_IIR_ALPHA);
             RobotHW_YawReset();
             MotionHeading_LocalYawReset();
@@ -1161,7 +1168,7 @@ void Turn_Step(void)
         {
             tc_phase = 2U;
             tc_phase_tick = now;
-            if (!GYRO_RECALIBRATE_BEFORE_EACH_COMMAND)
+            if (!TURN_POST_STOP_SETTLE_ENABLE)
             {
                 Command_BeginPostTurnActions();
             }
@@ -1182,7 +1189,7 @@ void Turn_Step(void)
     {
         if ((now - tc_phase_tick) >= TURN_RIGHT_RECENTER_HOLD_MS)
         {
-            MotionHeading_Reset();
+            if (TURN_END_HEADING_RESET_ENABLE) MotionHeading_Reset();
             Servo_SetPulse(SERVO_CENTER_US);
             tc_phase = 5U;
             tc_phase_tick = HAL_GetTick();

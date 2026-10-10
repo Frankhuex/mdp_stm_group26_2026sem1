@@ -145,10 +145,12 @@ STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<de
 
 - `STRAIGHT,STOP` → `OK,aborted=<0|1>`；若中止运行中的直行（含测距等待），随后发送一次 `state=ABORTED` 完成事件。
 - `STOP` → `OK`；停止电机、舵机回中，并中止正在运行的直行、转弯或侧移，随后发送对应完成事件。
-- 首次运动可能在回复 `OK` 前进行陀螺仪初始化和约 5.5 秒静止校准；后续是否重新校准、等待由 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 控制，详见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。首次初始化阶段仍是阻塞的。
+- 首次运动可能在回复 `OK` 前进行陀螺仪初始化和约 1.7 秒加初始化／读取耗时的静止校准；后续零偏刷新由 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 控制，其他等待和结束动作使用独立开关，详见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。首次初始化阶段仍是阻塞的。
 - 运动控制按至少 20 ms 间隔步进；UART 收发仍可能延迟主循环。运动期间跳过 OLED 命令刷新，独立陀螺轮询暂停，避免重复积分。没有硬实时停车时延保证。
 
 ## 4. 转弯命令
+
+指令转弯的起步舵机等待始终启用，独立于 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`。下发目标舵角后电机保持零输出，估算到位时间结束才起步。当前估算为 `80 + ceil(420 × abs(目标PWM − 上次PWM) / 1600)` ms，范围 80～500 ms，上次指令超出配置端点时等待 500 ms；参数位于 `turn_tuning.h`。估算依据为指令 PWM 变化量，没有实际舵角反馈，需带负载验证。小幅调整等待短，大幅调整等待长；此等待采用非阻塞状态，可响应 STOP。
 
 | 请求 | 参数 / 回复 |
 |---|---|
@@ -160,6 +162,8 @@ STRAIGHT,mode=<LEFTIR|RIGHTIR>,op=<GT|LT>,state=<S>,threshold_cm=<int>,ir_cm=<de
 | `TURN,STATUS` | `TURN,state=<S>,dir=<LEFT\|RIGHT>,elapsed=<ms>,r_cm=<int>,target_deg=<int>,yaw=<f>` |
 
 LEFT/RIGHT 选择转向侧，A 正值前进、负值倒车。R 无额外配置上限，但必须能解析为 int32。终态文本包括 `DONE`、`ABORTED`、`TIMEOUT`、`WRONG_SIGN`、`NO_TURN`、`BAD_CONFIG`、`NO_IMU`（后两项为接口可识别状态）。当前转弯参数以 [turn_tuning.h](../Core/Inc/control/turn_tuning.h) 和 [turn_control.c](../Core/Src/control/turn_control.c) 为准。
+
+转弯结束采用独立开关，默认均为 0：`TURN_POST_STOP_SETTLE_ENABLE` 控制制动后 500 ms 等待；`TURN_RIGHT_RETURN_ENABLE` 控制右转结束两段 500 ms 舵机保持；`TURN_LEFT_HEADING_OFF_ENABLE` 控制左转成功后自动关闭航向；`TURN_END_HEADING_RESET_ENABLE` 独立控制成功转弯后的航向历史重置。前进和倒车转弯均适用。`GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 只决定重复刷新零偏，校准所需停车和静止确认始终执行。目标制动与起步舵机估算等待始终保留。完整开关见 [MOTION_SETTINGS.md](MOTION_SETTINGS.md)。
 
 ### 4.1 侧向平移 LATERAL
 
@@ -231,7 +235,7 @@ LEFT1／RIGHT1 各 6 条，LEFT2／RIGHT2 各 12 条。
 
 与 LOOP,ONCE 共用序列执行器，每条运动成功完成后才开始下一条。
 FAST 不增加启动倒计时或额外指令间隔；运动准备、重复陀螺仪校准、
-转弯结束动作仍由 `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` 控制。
+转弯结束动作使用 robot_tuning.h 中的独立开关。
 不会强制切换航向模式。每组结束或失败后停车、回中。
 
 例如发送 `FAST,LEFT1`，先返回 `OK,fast=LEFT1,count=6`，

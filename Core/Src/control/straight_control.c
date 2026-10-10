@@ -576,7 +576,7 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
         return -2;
     MotionHeading_Prepare();
     sc_braking = 0U;
-    if (GYRO_RECALIBRATE_BEFORE_EACH_COMMAND) RobotHW_MotorStop();
+    if (MOTION_PREPARE_STOP_ENABLE) RobotHW_MotorStop();
     RobotHW_ServoSetUs(StraightCenterUs(1));
     if (UltrasonicSensor_Init() != 0) { MotionHeading_Degrade(); return -1; }
     prep_rc = RobotHW_PrepareMotionSensors();

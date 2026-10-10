@@ -5,7 +5,7 @@
  * Applies to both wheels, forward/reverse and kickstart; excludes braking
  * and steering. Actual vehicle speed is not proportional to PWM. */
 #ifndef MOTOR_SPEED_SCALE_PERCENT
-#define MOTOR_SPEED_SCALE_PERCENT       120U
+#define MOTOR_SPEED_SCALE_PERCENT       140U
 #endif
 #if MOTOR_SPEED_SCALE_PERCENT < 1 || MOTOR_SPEED_SCALE_PERCENT > 200
 #error "MOTOR_SPEED_SCALE_PERCENT must be between 1 and 200"
@@ -24,7 +24,7 @@
  * the straight-ahead angle is repeatable after any turn. Set to the observed
  * hysteresis (~120us here). Does NOT apply to the per-tick gyro-PID updates. */
 #define SERVO_BACKLASH_US               120U
-#define SERVO_TAKEUP_SETTLE_MS          120U
+#define SERVO_TAKEUP_SETTLE_MS          80U
 #define CMD_WHEELBASE_CM                18.0f
 #define CMD_LEFT_MIN_RADIUS_CM          18  /* hard steering limit */
 #define CMD_LEFT_SOFT_MIN_RADIUS_CM     20  /* normal lateral manoeuvres */
@@ -49,19 +49,70 @@
 #define GYRO_CALIB_DELAY_MS             10U
 #define GYRO_CALIB_WARMUP_MS            200U
 
-/* 1: recalibrate, use command preparation/settling waits and perform
- * successful turn-end actions (RIGHT steering holds / LEFT HEADING,OFF).
- * 0: reuse bias; skip repeated preparation stops, stillness checks, turn servo
- * settling, post-turn settling, turn-end actions and automatic sequence gaps.
- * First-use stationary calibration, target braking, faults/STOP, explicit
- * WAIT commands and per-motion yaw/encoder resets remain active.
- * Change and rebuild/reflash to select. Faster transitions alter the path
- * because steering can still be moving when drive begins. */
+/* Independent runtime policies. All defaults preserve the previous fast mode.
+ * Target braking, turn-start servo wait, STOP and first-use calibration remain. */
+/* Refresh gyro bias before each motion. First-use calibration is mandatory. */
 #ifndef GYRO_RECALIBRATE_BEFORE_EACH_COMMAND
-#define GYRO_RECALIBRATE_BEFORE_EACH_COMMAND 1U
+#define GYRO_RECALIBRATE_BEFORE_EACH_COMMAND 0U
 #endif
 #if GYRO_RECALIBRATE_BEFORE_EACH_COMMAND != 0 && GYRO_RECALIBRATE_BEFORE_EACH_COMMAND != 1
 #error "GYRO_RECALIBRATE_BEFORE_EACH_COMMAND must be 0 or 1"
+#endif
+
+/* Additional motion preparation brake/centering; calibration always stops. */
+#ifndef MOTION_PREPARE_STOP_ENABLE
+#define MOTION_PREPARE_STOP_ENABLE 1U
+#endif
+#if MOTION_PREPARE_STOP_ENABLE != 0 && MOTION_PREPARE_STOP_ENABLE != 1
+#error "MOTION_PREPARE_STOP_ENABLE must be 0 or 1"
+#endif
+
+/* Additional stationary check; calibration always checks stillness. */
+#ifndef MOTION_STILL_CHECK_ENABLE
+#define MOTION_STILL_CHECK_ENABLE 1U
+#endif
+#if MOTION_STILL_CHECK_ENABLE != 0 && MOTION_STILL_CHECK_ENABLE != 1
+#error "MOTION_STILL_CHECK_ENABLE must be 0 or 1"
+#endif
+
+/* Wait POST_STOP_SETTLE_MS after turn braking. */
+#ifndef TURN_POST_STOP_SETTLE_ENABLE
+#define TURN_POST_STOP_SETTLE_ENABLE 1U
+#endif
+#if TURN_POST_STOP_SETTLE_ENABLE != 0 && TURN_POST_STOP_SETTLE_ENABLE != 1
+#error "TURN_POST_STOP_SETTLE_ENABLE must be 0 or 1"
+#endif
+
+/* Successful right turn: 1500 us hold then centre hold. */
+#ifndef TURN_RIGHT_RETURN_ENABLE
+#define TURN_RIGHT_RETURN_ENABLE 1U
+#endif
+#if TURN_RIGHT_RETURN_ENABLE != 0 && TURN_RIGHT_RETURN_ENABLE != 1
+#error "TURN_RIGHT_RETURN_ENABLE must be 0 or 1"
+#endif
+
+/* Successful left turn automatically applies HEADING,OFF. */
+#ifndef TURN_LEFT_HEADING_OFF_ENABLE
+#define TURN_LEFT_HEADING_OFF_ENABLE 1U
+#endif
+#if TURN_LEFT_HEADING_OFF_ENABLE != 0 && TURN_LEFT_HEADING_OFF_ENABLE != 1
+#error "TURN_LEFT_HEADING_OFF_ENABLE must be 0 or 1"
+#endif
+
+/* Reset heading history after successful turns, independently of steering holds. */
+#ifndef TURN_END_HEADING_RESET_ENABLE
+#define TURN_END_HEADING_RESET_ENABLE 1U
+#endif
+#if TURN_END_HEADING_RESET_ENABLE != 0 && TURN_END_HEADING_RESET_ENABLE != 1
+#error "TURN_END_HEADING_RESET_ENABLE must be 0 or 1"
+#endif
+
+/* Apply configured sequence gaps; diagnostic observers retain their waits. */
+#ifndef SEQUENCE_COMMAND_GAP_ENABLE
+#define SEQUENCE_COMMAND_GAP_ENABLE 1U
+#endif
+#if SEQUENCE_COMMAND_GAP_ENABLE != 0 && SEQUENCE_COMMAND_GAP_ENABLE != 1
+#error "SEQUENCE_COMMAND_GAP_ENABLE must be 0 or 1"
 #endif
 
 /* Stationary calibration checks and optional short gyro-Z bias refresh. */

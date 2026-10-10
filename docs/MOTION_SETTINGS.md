@@ -23,32 +23,29 @@ The scale applies once to all shared drive outputs, including kickstart and manu
 MOTOR commands. Reported motor PWM is the scaled output. Braking and servo pulses
 are unchanged. Actual speed is not proportional to PWM; saturation is possible.
 
-## 校准与衔接开关 / Calibration and transition waits
+## 独立控制开关 / Independent control switches
 
-| 行为 / Behavior | `1U` | `0U` |
-|---|---|---|
-| 首次没有零偏时静止校准 / First-use calibration | 保留 / retained | 保留 / retained |
-| 每条运动前重复校准 / Repeat bias calibration | 开启 / on | 跳过 / skipped |
-| 重复准备停车与至少 250 ms 静止检查 / Repeated preparation | 保留 / retained | 跳过 / skipped |
-| 转弯前 800 ms 舵机等待 / Turn servo wait | 保留 / retained | 跳过 / skipped |
-| 转弯后 1000 ms 稳定等待 / Post-turn settling | 保留 / retained | 跳过 / skipped |
-| 右转结束 1500 us／500 ms，再中位／500 ms / RIGHT end steering holds | 保留 / retained | 跳过 / skipped |
-| 左转结束 HEADING,OFF 与航向重置 / LEFT end heading disable/reset | 保留 / retained | 跳过 / skipped |
-| 执行器自动指令间隔（当前 300 ms） / Automatic sequence gap | 保留 / retained | 跳过 / skipped |
-| 到达目标时制动 / Target braking | 保留 / retained | 保留 / retained |
-| 每段 yaw／编码器清零 / Per-motion reset | 保留 / retained | 保留 / retained |
-| 启动倒计时、显式 WAIT、STOP、故障处理 / Startup, WAIT, STOP, faults | 保留 / retained | 保留 / retained |
+以下开关位于 `robot_tuning.h`，默认均为 `0U`，保持拆分前的快速模式。
+`1U` 启用对应行为，`0U` 关闭；修改后重新编译烧录。
 
-关闭开关会减少停顿，**不等于不停轮衔接**。车轮仍在每段目标位置制动，下一段
-重新起步；也没有跨指令速度规划。舵机尚未到位时就可能开始行驶，轨迹需实测。
-`0U` 时仍在正常转弯制动释放后使舵机回中，但直接完成，不执行上述左右转结束动作。
-首次陀螺仪校准仍保留；航向 ON/OFF 模式不再由左转结束动作自动改变。
-本开关不取消超声波首次测距确认，也不取消独立元件／标定测试的专用等待。
+| 开关 / Switch | 控制内容 / Behavior |
+|---|---|
+| `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` | 每段运动刷新零偏 / Refresh gyro bias before each motion |
+| `MOTION_PREPARE_STOP_ENABLE` | 额外准备制动，转弯准备回中 / Additional preparation stops and turn centring |
+| `MOTION_STILL_CHECK_ENABLE` | 额外静止检查 / Additional stationary check |
+| `TURN_POST_STOP_SETTLE_ENABLE` | 转弯制动后等 500 ms / Post-turn 500 ms settling |
+| `TURN_RIGHT_RETURN_ENABLE` | 右转结束 1500 us 保持 500 ms，再回中保持 500 ms / RIGHT steering holds |
+| `TURN_LEFT_HEADING_OFF_ENABLE` | 左转成功后自动 HEADING,OFF / LEFT automatically disables heading |
+| `TURN_END_HEADING_RESET_ENABLE` | 转弯成功后清空航向历史 / Reset heading history after successful turns |
+| `SEQUENCE_COMMAND_GAP_ENABLE` | 执行序列配置的 gap_ms / Apply configured sequence gaps |
 
-Fast mode reuses gyro bias and removes automatic preparation/settling delays in
-the production straight/turn command path and sequence gaps. It does not remove
-target braking, explicit WAIT, startup delay, sensor readiness or fault handling.
-Steering may still be moving when drive starts; this is not continuous motion blending.
+首次没有有效零偏时总会制动、确认静止并完整校准；启用重复零偏校准时也必须制动并确认静止，关闭其他准备开关不会取消这些校准前提。单独启用静止检查也会先制动。航向重置保留 ON/OFF 设置；启用左转自动 HEADING,OFF 则按该命令语义同时重置航向。右转舵机保持可在保留航向历史时单独启用。
+
+First-use calibration always brakes and verifies stillness. Repeat bias calibration has the same prerequisites even if preparation switches are off. A standalone stillness check also brakes first. Heading reset preserves ON/OFF; LEFT HEADING,OFF additionally resets the origin by its existing semantics. RIGHT steering holds can run without resetting heading history.
+
+转弯起步按 PWM 行程估算的舵机等待始终保留；目标制动、每段 yaw／编码器起点、舵机回差定位、超声波初始确认、STOP、故障处理、显式 WAIT 和启动倒计时都保留。诊断 observer 前的等待及配置间隔不受序列开关取消。各段仍制动后重新起步，没有跨段连续速度规划。
+
+Turn-start PWM-travel waiting, target braking, per-motion measurement resets, servo backlash take-up, ultrasound confirmation, STOP, faults, explicit WAIT and startup delay remain. Diagnostic observers retain their waits/gaps. Motion segments still stop and restart.
 
 ## 转弯与制动 / Turns and braking
 
@@ -91,3 +88,15 @@ STRAIGHT_REVERSE_TRIM_US 为 +8 us，对应基准脉宽 1767／1733 us。
 例如无继承误差时 LEFT A=90 的内部目标为 89.10 度，再应用停车提前量，
 目标是补偿停车过程后实际转到 90 度；这次调整仍需实车验证。
 TURN_*_STEER_SCALE 仍限制在 (0, 1]，不受目标角度比例调整影响。
+
+
+### 转弯起步舵机等待独立控制 / Independent turn-start steering wait
+
+转弯指令起步前始终等待，GYRO_RECALIBRATE_BEFORE_EACH_COMMAND=0 也保留。
+按下发 PWM 变化量估算，当前最低 80 ms，全端点行程 500 ms，参数为
+TURN_SERVO_WAIT_MIN_MS 和 TURN_SERVO_WAIT_FULL_SPAN_MS。无实际舵角反馈，
+需要实车负载验证；旧固定 500 ms 仍用于独立最小半径诊断。
+Command turns always wait before driving, including with gyro recalibration off.
+The open-loop PWM-travel estimate ranges from 80 to 500 ms; configurable in
+turn_tuning.h. It is not a physical servo-position measurement. The standalone
+minimum-radius diagnostic retains its own fixed 500 ms wait.

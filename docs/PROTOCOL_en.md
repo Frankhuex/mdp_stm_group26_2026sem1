@@ -169,10 +169,12 @@ Successful condition stops retain the selected-side reading in `Straight_LeftIRS
 
 - `STRAIGHT,STOP` → `OK,aborted=<0|1>`; aborting running straight motion, including the initial measurement wait, is followed by one `state=ABORTED` event.
 - `STOP` → `OK`; zeros motor PWM, centers steering and aborts running straight/turn motion, followed by its completion event.
-- The first motion may initialize and calibrate the gyro while stationary for approximately 5.5 seconds before replying `OK`. Later calibration and waits depend on `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`; see [MOTION_SETTINGS.md](MOTION_SETTINGS.md). First-use initialization remains blocking.
+- The first motion may initialize and calibrate the gyro while stationary for approximately 1.7 seconds plus initialization/read overhead before replying `OK`. Repeat bias calibration uses `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`; other waits/actions use independent switches; see [MOTION_SETTINGS.md](MOTION_SETTINGS.md). First-use initialization remains blocking.
 - Motion control steps at intervals of at least 20 ms; UART reception/transmission can still delay the main loop. OLED command refresh is skipped during motion, and independent gyro polling pauses to avoid double integration. There is no hard real-time stopping-latency guarantee.
 
 ## 4. Turn Commands
+
+Command-turn steering wait is always enabled, independently of `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`. After setting the target steering pulse, motor drive stays zero until the estimated positioning time expires. The estimate is `80 + ceil(420 × abs(target_us − previous_us) / 1600)` ms, bounded to 80..500 ms; previous commands outside configured endpoints use 500 ms. These values are configurable in `turn_tuning.h`. This uses commanded PWM travel, with no physical position feedback. It needs validation with the loaded servo; small changes wait less, large changes wait longer. STOP remains available during the non-blocking wait.
 
 | Request | Arguments / response |
 |---|---|
@@ -185,23 +187,12 @@ Successful condition stops retain the selected-side reading in `Straight_LeftIRS
 
 LEFT/RIGHT selects steering side; positive A drives forward, negative A backward. R has no additional configured upper bound but must parse as int32. Terminal text includes `DONE`, `ABORTED`, `TIMEOUT`, `WRONG_SIGN`, `NO_TURN`, `BAD_CONFIG`, and `NO_IMU` (the last two are recognized interface states). Current turn parameters are defined in [turn_tuning.h](../Core/Inc/control/turn_tuning.h) and [turn_control.c](../Core/Src/control/turn_control.c).
 
-With `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND=1U`, each successful TURN performs
-its automatic follow-up before DONE, in either gear:
-
-- RIGHT: after normal braking/settling with motors stopped, apply 1500 us for
-  500 ms, then centre (1725 us) for 500 ms. Each pulse clears heading
-  history like STEER,US; the enabled ON/OFF setting is preserved.
-- LEFT: apply HEADING,OFF after normal braking/settling, including the heading
-  origin and gyro-yaw reset. Local gyro steering remains active on later GOCM.
-
-At `0U`, repeated gyro calibration and these follow-up actions are skipped:
-normal braking and steering centring still occur, then the turn completes
-without RIGHT steering holds or LEFT heading disable/reset.
+Independent switches in `robot_tuning.h` control turn-end actions, all defaulting to 0: `TURN_POST_STOP_SETTLE_ENABLE` adds 500 ms after braking; `TURN_RIGHT_RETURN_ENABLE` performs the stopped 1500 us / 500 ms then centre / 500 ms holds; `TURN_LEFT_HEADING_OFF_ENABLE` applies HEADING,OFF on successful LEFT; `TURN_END_HEADING_RESET_ENABLE` resets successful-turn heading history independently of steering holds. These work in either gear. `GYRO_RECALIBRATE_BEFORE_EACH_COMMAND` controls only repeated bias refresh, with mandatory stationary calibration preparation. Target braking and estimated turn-start servo waiting always remain. See [MOTION_SETTINGS.md](MOTION_SETTINGS.md) for preparation/stillness and sequence-gap switches.
 
 RIGHT remains RUNNING during both non-blocking holds; new motion/manual steering
 is rejected as busy, and STOP cancels the sequence. Completion actions do not
 run after a turn failure/abort. TURN,STATUS preserves the completed turn yaw;
-HEADING,STATUS reports the reset reference. Command arrays wait for these actions
+HEADING,STATUS reports the reference according to the enabled heading policies. Command arrays wait for these actions
 before advancing, and UART clients must wait for DONE. See the
 [automatic turn procedure](TURN_REVERSE_DIAGNOSIS.md#automatic-actions-after-each-turn).
 
@@ -246,7 +237,7 @@ Every reply below ends with `\r\n`. `<f>` denotes three-decimal numeric formatti
 FAST uses the LOOP sequence executor, waiting for each motion to succeed and
 stopping on failure or UART STOP. It adds no startup delay or inter-command gap;
 normal calibration, steering waits and turn-end actions follow
-`GYRO_RECALIBRATE_BEFORE_EACH_COMMAND`. Heading mode is not forced.
+the independent switches in robot_tuning.h. Heading mode is not forced.
 Replies are `OK,fast=<route>,count=<n>` followed by
 `DONE,FAST,route=<route>,state=DONE,count=<n>`, or on failure
 `DONE,FAST,route=<route>,state=<reason>,index=<step>,count=<n>`.
