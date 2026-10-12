@@ -108,7 +108,7 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_approach_commands[] =
 {
-    "STRAIGHT,UNTILUS,31",
+    "STRAIGHT,UNTILUS,30",
 };
 static const char *const fast_left1_commands[] =
 {

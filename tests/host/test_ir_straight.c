@@ -50,6 +50,8 @@ void RobotHW_MotorSetForward(uint32_t l, uint32_t r)
 { last_left_pwm=l; last_right_pwm=r; drives++; mock_direction = 1; mock_drive_servo = mock_servo; }
 void RobotHW_MotorSetBackward(uint32_t l, uint32_t r)
 { last_left_pwm=l; last_right_pwm=r; drives++; mock_direction = -1; mock_drive_servo = mock_servo; }
+void RobotHW_MotorSetTurnForward(uint32_t l,uint32_t r) { RobotHW_MotorSetForward(l,r); }
+void RobotHW_MotorSetTurnBackward(uint32_t l,uint32_t r) { RobotHW_MotorSetBackward(l,r); }
 uint32_t RobotHW_MotorLeftMax(void) { return 7199; }
 uint32_t RobotHW_MotorRightMax(void) { return 7199; }
 uint32_t RobotHW_ClampPwm(int32_t x, uint32_t m) { return x < 0 ? 0 : (uint32_t)x > m ? m : (uint32_t)x; }

@@ -83,17 +83,17 @@ void RobotHW_MotorStop(void)
     RobotHW_MotorBrakeRelease();
 }
 
-static uint32_t Motor_ScaledMagnitude(int32_t pwm, uint32_t maximum)
+static uint32_t Motor_ScaledMagnitude(int32_t pwm, uint32_t maximum, uint32_t scale_percent)
 {
     uint64_t magnitude = (pwm < 0) ? (uint64_t)(-(int64_t)pwm) : (uint64_t)pwm;
-    uint64_t scaled = (magnitude * MOTOR_SPEED_SCALE_PERCENT + 50U) / 100U;
+    uint64_t scaled = (magnitude * scale_percent + 50U) / 100U;
     return (scaled > maximum) ? maximum : (uint32_t)scaled;
 }
 
-void RobotHW_MotorSetSigned(int32_t left_pwm, int32_t right_pwm)
+static void Motor_SetSignedScaled(int32_t left_pwm, int32_t right_pwm, uint32_t scale_percent)
 {
-    uint32_t left_abs = Motor_ScaledMagnitude(left_pwm, RobotHW_MotorLeftMax());
-    uint32_t right_abs = Motor_ScaledMagnitude(right_pwm, RobotHW_MotorRightMax());
+    uint32_t left_abs = Motor_ScaledMagnitude(left_pwm, RobotHW_MotorLeftMax(), scale_percent);
+    uint32_t right_abs = Motor_ScaledMagnitude(right_pwm, RobotHW_MotorRightMax(), scale_percent);
     motor_left_requested = left_pwm;
     motor_right_requested = right_pwm;
     motor_left_pwm = (left_pwm < 0) ? -(int32_t)left_abs : (int32_t)left_abs;
@@ -120,6 +120,21 @@ void RobotHW_MotorSetSigned(int32_t left_pwm, int32_t right_pwm)
         __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_1, right_abs);
         __HAL_TIM_SET_COMPARE(&htim9, TIM_CHANNEL_2, 0U);
     }
+}
+
+void RobotHW_MotorSetSigned(int32_t left_pwm, int32_t right_pwm)
+{
+    Motor_SetSignedScaled(left_pwm, right_pwm, STRAIGHT_SPEED_SCALE_PERCENT);
+}
+
+void RobotHW_MotorSetTurnForward(uint32_t left_pwm, uint32_t right_pwm)
+{
+    Motor_SetSignedScaled((int32_t)left_pwm, (int32_t)right_pwm, TURN_SPEED_SCALE_PERCENT);
+}
+
+void RobotHW_MotorSetTurnBackward(uint32_t left_pwm, uint32_t right_pwm)
+{
+    Motor_SetSignedScaled(-(int32_t)left_pwm, -(int32_t)right_pwm, TURN_SPEED_SCALE_PERCENT);
 }
 
 void RobotHW_MotorSetForward(uint32_t left_pwm, uint32_t right_pwm)

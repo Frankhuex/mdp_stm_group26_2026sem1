@@ -1,20 +1,24 @@
 #ifndef ROBOT_TUNING_H
 #define ROBOT_TUNING_H
 
-/* Global drive PWM multiplier: 100 = unchanged, 80 = 0.8x, 120 = 1.2x.
- * Applies to both wheels, forward/reverse and kickstart; excludes braking
- * and steering. Actual vehicle speed is not proportional to PWM. */
-#ifndef MOTOR_SPEED_SCALE_PERCENT
-#define MOTOR_SPEED_SCALE_PERCENT       150U
+/* Independent drive multipliers, 1..200 percent. Braking/servo are unscaled. */
+#ifndef STRAIGHT_SPEED_SCALE_PERCENT
+#define STRAIGHT_SPEED_SCALE_PERCENT    170U
 #endif
-#if MOTOR_SPEED_SCALE_PERCENT < 1 || MOTOR_SPEED_SCALE_PERCENT > 200
-#error "MOTOR_SPEED_SCALE_PERCENT must be between 1 and 200"
+#ifndef TURN_SPEED_SCALE_PERCENT
+#define TURN_SPEED_SCALE_PERCENT        125U
+#endif
+#if STRAIGHT_SPEED_SCALE_PERCENT < 1 || STRAIGHT_SPEED_SCALE_PERCENT > 200
+#error "STRAIGHT_SPEED_SCALE_PERCENT must be between 1 and 200"
+#endif
+#if TURN_SPEED_SCALE_PERCENT < 1 || TURN_SPEED_SCALE_PERCENT > 200
+#error "TURN_SPEED_SCALE_PERCENT must be between 1 and 200"
 #endif
 
 /* Shared mechanical calibration: edit here, never in individual controllers.
  * Larger servo pulse steers RIGHT. Hold 1725 us for the next 60 cm test
  * with gyro steering enabled and zero extra straight trim. */
-#define SERVO_CENTER_US                 1725U
+#define SERVO_CENTER_US                 1717U
 #define CMD_SERVO_LEFT_US               1000U
 #define CMD_SERVO_RIGHT_US              2600U
 

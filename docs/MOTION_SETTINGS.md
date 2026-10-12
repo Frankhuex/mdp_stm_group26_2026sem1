@@ -5,23 +5,18 @@
 这些参数不是 UART 命令。
 
 ```c
-#define MOTOR_SPEED_SCALE_PERCENT 120U
+#define STRAIGHT_SPEED_SCALE_PERCENT 150U
+#define TURN_SPEED_SCALE_PERCENT 150U
 #define GYRO_RECALIBRATE_BEFORE_EACH_COMMAND 0U
 ```
 
-## 全局 PWM 比例 / Global drive scale
+## 直行与转弯 PWM 比例 / Straight and turn drive scales
 
-`MOTOR_SPEED_SCALE_PERCENT` 支持 1～200：100 保持原 PWM，80 为 0.8 倍，
-120 为 1.2 倍。缩放发生在共享电机驱动入口，覆盖直行、转弯、IR、超声波、
-前进、倒车、起步，以及手动 MOTOR 指令。结果四舍五入并限制在电机 PWM 上限。
-状态中的电机 PWM 是缩放后的值。单独设置一侧电机不会再次缩放另一侧。
+`STRAIGHT_SPEED_SCALE_PERCENT` 与 `TURN_SPEED_SCALE_PERCENT` 位于 `robot_tuning.h`，均支持 1～200，当前均为 150。100 为原始 PWM，150 为 1.5 倍；倍率改变的是 PWM，实际车速不一定同比变化。
 
-**制动和舵机不参与缩放。** PWM 比例不是实测车速比例；比例过低可能无法起步，
-提高比例可能改变停车误差。调整后复测距离和转弯角度。
+直行倍率用于 GOCM、IR、UNTILUS、手动 MOTOR 和通用电机接口；转弯倍率用于 TURN 控制器所有前后方向输出及 LATERAL/BYPASS/SEARCHLATERAL 的转弯段。组合动作中的直行段仍使用直行倍率。电机驱动只缩放一次、四舍五入并限制 PWM 上限；制动与舵机不参与缩放。修改后重新编译烧录。
 
-The scale applies once to all shared drive outputs, including kickstart and manual
-MOTOR commands. Reported motor PWM is the scaled output. Braking and servo pulses
-are unchanged. Actual speed is not proportional to PWM; saturation is possible.
+Both constants accept 1..200 percent and currently default to 150. Generic/manual/straight outputs use STRAIGHT; turn-controller outputs use TURN, including composite arcs. Scaling occurs once in the motor driver with rounding and saturation. Reported PWM is the scaled output. Braking and servo commands are unscaled; rebuild/reflash after changes.
 
 ## 独立控制开关 / Independent control switches
 
@@ -127,3 +122,6 @@ AUTO starts reverse creep on an invalid initial echo and stores zero in its star
 
 显式 BACKWARD 开局无有效回波时，Straight_BackwardUSStartMm 同样缓存为 0；慢速倒退恢复回波后保持 0，结束缓存规则不变。
 Explicit BACKWARD also caches zero for invalid starting echoes, retaining it after recovery; end-cache behavior is unchanged.
+
+直行与转弯独立倍率均默认 150%，参数位于 robot_tuning.h。直行倍率覆盖 GOCM、IR、UNTILUS、手动 MOTOR 及其他通用电机输出；转弯倍率覆盖 TURN 控制器前后方向、起步、巡航与末段，以及 LATERAL/BYPASS/SEARCHLATERAL 内部转弯。每次只缩放一次，制动与舵机不缩放。
+Straight and turn scaling now use separate 150% defaults. Generic/manual outputs use the straight multiplier; all turn-controller outputs use the turn multiplier, including composite arcs. No double scaling; braking and steering remain unscaled.

@@ -26,6 +26,9 @@ void RobotHW_MotorStop(void);
 void RobotHW_MotorBrakeBegin(void);
 void RobotHW_MotorBrakeRelease(void);
 void RobotHW_MotorSetSigned(int32_t left_pwm, int32_t right_pwm);
+/* Explicit turn outputs apply TURN_SPEED_SCALE_PERCENT once. Other outputs use STRAIGHT. */
+void RobotHW_MotorSetTurnForward(uint32_t left_pwm, uint32_t right_pwm);
+void RobotHW_MotorSetTurnBackward(uint32_t left_pwm, uint32_t right_pwm);
 void RobotHW_MotorSetForward(uint32_t left_pwm, uint32_t right_pwm);
 void RobotHW_MotorSetBackward(uint32_t left_pwm, uint32_t right_pwm);
 int32_t RobotHW_MotorGetLeftSigned(void);

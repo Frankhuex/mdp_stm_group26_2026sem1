@@ -205,12 +205,12 @@ static void Motor_Stop(void)
 
 static void Drive_Forward(uint32_t pwm)
 {
-    RobotHW_MotorSetForward(pwm, pwm);
+    RobotHW_MotorSetTurnForward(pwm, pwm);
 }
 
 static void Drive_Backward(uint32_t pwm)
 {
-    RobotHW_MotorSetBackward(pwm, pwm);
+    RobotHW_MotorSetTurnBackward(pwm, pwm);
 }
 
 static void OLED_FourLines(const char *l1,
