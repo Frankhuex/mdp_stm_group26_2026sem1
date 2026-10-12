@@ -41,10 +41,10 @@ int SearchLateral_Start(uint8_t side, int32_t gate_cm, int32_t threshold_cm)
     if (side > 1U || gate_cm < MIN_COMMAND_DISTANCE_CM || gate_cm > MAX_COMMAND_DISTANCE_CM ||
         threshold_cm < 10 || threshold_cm > (side ? 60 : 50)) return -2;
     int64_t limit = SEARCH_LATERAL_DEFAULT_LIMIT_MM;
-    if (Bypass_ForwardDistanceMm != UINT32_MAX && Straight_BackwardUSStartMm != UINT32_MAX &&
+    if (Bypass_ForwardDistanceMm != UINT32_MAX && Straight_AutoUSStartMm != UINT32_MAX &&
         Straight_ForwardUSEndMm != UINT32_MAX) {
         int64_t cached = (int64_t)Bypass_ForwardDistanceMm 
-            + Straight_BackwardUSStartMm 
+            + Straight_AutoUSStartMm 
             - Straight_ForwardUSEndMm
             + 300;
         if (cached > 0 && cached <= IR_COMMAND_MAX_TRAVEL_CM * 10) limit = cached;

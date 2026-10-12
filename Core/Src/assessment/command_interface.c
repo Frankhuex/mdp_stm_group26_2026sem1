@@ -122,7 +122,7 @@ static const char *const fast_left1_commands[] =
     // "STRAIGHT,GOCM,-33",
 
     "BYPASS,LEFT,25",
-    "STRAIGHT,BACKWARD,UNTILUS,32",
+    "STRAIGHT,AUTO,UNTILUS,32",
 };
 static const char *const fast_left2_commands[] =
 {
@@ -147,7 +147,7 @@ static const char *const fast_right1_commands[] =
     // "STRAIGHT,GOCM,-33",
 
     "BYPASS,RIGHT,25",
-    "STRAIGHT,BACKWARD,UNTILUS,34",
+    "STRAIGHT,AUTO,UNTILUS,34",
 };
 static const char *const fast_right2_commands[] =
 {
@@ -1368,12 +1368,12 @@ static void DispatchLine(char *line)
             else Cmd_Reject("ERR,BUSY");
         }
         else if ((tok1 && strcmp(tok1, "UNTILUS") == 0 && tok2 && tok3 == NULL) ||
-                 (tok1 && (strcmp(tok1, "FORWARD") == 0 || strcmp(tok1, "BACKWARD") == 0) &&
+                 (tok1 && (strcmp(tok1, "FORWARD") == 0 || strcmp(tok1, "BACKWARD") == 0 || strcmp(tok1, "AUTO") == 0) &&
                   tok2 && strcmp(tok2, "UNTILUS") == 0 && tok3 && tok4 == NULL))
         {
             int32_t cm;
             int rc;
-            int8_t direction = strcmp(tok1, "BACKWARD") == 0 ? -1 : 1;
+            int8_t direction = strcmp(tok1, "AUTO") == 0 ? 0 : strcmp(tok1, "BACKWARD") == 0 ? -1 : 1;
             const char *distance_arg = strcmp(tok1, "UNTILUS") == 0 ? tok2 : tok3;
             if (!ParseIntStrict(distance_arg, &cm))
             {
@@ -1387,13 +1387,13 @@ static void DispatchLine(char *line)
             }
             /* Compare directly with the sensor distance reported by US,GET,
              * in either direction; no installation offset is added. */
-            rc = Straight_StartUntilUltrasonicDirectionCm(cm, direction);
+            rc = direction == 0 ? Straight_StartUntilUltrasonicAutoCm(cm) : Straight_StartUntilUltrasonicDirectionCm(cm, direction);
             if (rc == 0)
             {
                 char msg[96];
                 pending_motion = PENDING_MOTION_UNTILUS;
                 snprintf(msg, sizeof(msg), "OK,mode=UNTILUS,threshold_cm=%ld,dir=%s\r\n", (long)cm,
-                         direction > 0 ? "FORWARD" : "BACKWARD");
+                         direction == 0 ? "AUTO" : direction > 0 ? "FORWARD" : "BACKWARD");
                 Cmd_Send(msg);
             }
             else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");

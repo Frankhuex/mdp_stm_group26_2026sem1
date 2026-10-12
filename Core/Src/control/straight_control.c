@@ -62,6 +62,10 @@ uint32_t Straight_ForwardUSStartMm = UINT32_MAX;
 uint32_t Straight_BackwardUSStartMm = UINT32_MAX;
 uint32_t Straight_ForwardUSEndMm = UINT32_MAX;
 uint32_t Straight_BackwardUSEndMm = UINT32_MAX;
+uint32_t Straight_AutoUSStartMm = UINT32_MAX;
+uint32_t Straight_AutoUSEndMm = UINT32_MAX;
+static uint8_t sc_us_auto;
+static int8_t sc_us_auto_candidate_dir;
 static uint8_t sc_us_start_reading_cached;
 static uint8_t sc_us_moving;
 static int32_t sc_us_threshold_cm;
@@ -433,6 +437,8 @@ void Straight_Init(void)
     Straight_RightIRStopCmX10 = UINT32_MAX;
     Straight_ForwardUSStartMm = Straight_BackwardUSStartMm = UINT32_MAX;
     Straight_ForwardUSEndMm = Straight_BackwardUSEndMm = UINT32_MAX;
+    Straight_AutoUSStartMm = Straight_AutoUSEndMm = UINT32_MAX;
+    sc_us_auto = 0U;
     sc_us_start_reading_cached = 0U;
     sc_fixed_steer_us = 0U;
     TraceReset();
@@ -729,11 +735,16 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
     return Straight_StartUntilUltrasonicDirectionCm(threshold_cm, 1);
 }
 
+int Straight_StartUntilUltrasonicAutoCm(int32_t threshold_cm)
+{
+    return Straight_StartUntilUltrasonicDirectionCm(threshold_cm, 0);
+}
+
 int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction)
 {
     int prep_rc;
     if (sc_state == STRAIGHT_RUNNING) return -3;
-    if ((direction != 1 && direction != -1) ||
+    if ((direction != 1 && direction != -1 && direction != 0) ||
         threshold_cm < US_MIN_THRESHOLD_CM || threshold_cm > US_MAX_THRESHOLD_CM)
         return -2;
     MotionHeading_Prepare();
@@ -753,7 +764,10 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
     sc_ir_search_limit_mm = 0U;
     sc_us_moving = 0U;
     sc_us_start_reading_cached = 0U;
-    if (direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
+    sc_us_auto = direction == 0;
+    sc_us_auto_candidate_dir = 0;
+    if (sc_us_auto) Straight_AutoUSStartMm = Straight_AutoUSEndMm = UINT32_MAX;
+    else if (direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
     else Straight_BackwardUSStartMm = Straight_BackwardUSEndMm = UINT32_MAX;
     sc_us_threshold_cm = threshold_cm;
     sc_us_stop_reading_valid = 0U;
@@ -806,7 +820,8 @@ static void FinishUltrasonic(straight_state_t state)
     if (sc_state == STRAIGHT_DONE && sc_us_stop_reading_valid)
     {
         /* Use the requested gear even when already reached without driving. */
-        if (sc_dir > 0) Straight_ForwardUSEndMm = sc_us_stop_mm;
+        if (sc_us_auto) Straight_AutoUSEndMm = sc_us_stop_mm;
+        else if (sc_dir > 0) Straight_ForwardUSEndMm = sc_us_stop_mm;
         else Straight_BackwardUSEndMm = sc_us_stop_mm;
     }
 }
@@ -877,11 +892,31 @@ static void StepUltrasonic(void)
             sc_us_fail_count = 0U;
             if (!sc_us_moving && !sc_us_start_reading_cached)
             {
-                if (sc_dir > 0) Straight_ForwardUSStartMm = sample.distance_mm;
+                if (sc_us_auto) Straight_AutoUSStartMm = sample.distance_mm;
+                else if (sc_dir > 0) Straight_ForwardUSStartMm = sample.distance_mm;
                 else Straight_BackwardUSStartMm = sample.distance_mm;
                 sc_us_start_reading_cached = 1U;
             }
-            if (!sc_us_moving)
+            if (!sc_us_moving && sc_us_auto)
+            {
+                int8_t candidate = sample.distance_mm > target_mm ? 1 : sample.distance_mm < target_mm ? -1 : 0;
+                uint32_t spread = sample.distance_mm > sc_us_stop_candidate_mm
+                    ? sample.distance_mm - sc_us_stop_candidate_mm : sc_us_stop_candidate_mm - sample.distance_mm;
+                if (!sc_us_start_confirm_count || candidate != sc_us_auto_candidate_dir || spread > US_STOP_CONFIRM_MAX_SPREAD_MM)
+                    sc_us_start_confirm_count = 1U;
+                else sc_us_start_confirm_count++;
+                sc_us_auto_candidate_dir = candidate;
+                sc_us_stop_candidate_mm = sample.distance_mm;
+                if (sc_us_start_confirm_count >= US_START_CONFIRM_SAMPLES) {
+                    sc_dir = candidate;
+                    if (!candidate) { FinishUltrasonic(STRAIGHT_DONE); return; }
+                    /* Gear is now fixed. Position for that gear before energizing wheels. */
+                    if (RobotHW_ServoGetUs() != StraightCenterUs(sc_dir))
+                        RobotHW_ServoSetUsTakeup(StraightCenterUs(sc_dir));
+                    StartUltrasonicDrive(HAL_GetTick());
+                }
+            }
+            else if (!sc_us_moving)
             {
                 uint8_t already_reached = sc_dir > 0
                     ? sample.distance_mm < target_mm : sample.distance_mm > target_mm;
@@ -932,7 +967,21 @@ static void StepUltrasonic(void)
             sc_us_start_confirm_count = 0U;
             if (sc_us_fail_count < UINT8_MAX) sc_us_fail_count++;
             /* A missing echo cannot select arrival, but direction is explicit. */
-            if (!sc_us_moving) StartUltrasonicDrive(now);
+            if (!sc_us_moving) {
+                if (sc_us_auto) {
+                    /* No starting echo: treat clearance as zero and retreat slowly.
+                     * Keep AUTO cache ownership and lock reverse for this command. */
+                    Straight_AutoUSStartMm = 0U;
+                    sc_us_start_reading_cached = 1U;
+                    sc_dir = -1;
+                    if (RobotHW_ServoGetUs() != StraightCenterUs(sc_dir))
+                        RobotHW_ServoSetUsTakeup(StraightCenterUs(sc_dir));
+                } else if (sc_dir < 0 && !sc_us_start_reading_cached) {
+                    Straight_BackwardUSStartMm = 0U;
+                    sc_us_start_reading_cached = 1U;
+                }
+                StartUltrasonicDrive(HAL_GetTick());
+            }
         }
     }
     /* Keep sampling after a brief no-echo result; -3 here only means

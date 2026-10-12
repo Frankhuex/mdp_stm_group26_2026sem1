@@ -20,7 +20,7 @@ int Turn_StartRadiusAngle(int32_t r,int32_t a,int8_t d)
 static void setup(uint32_t limit)
 {
     reset(); Lateral_Init(); SearchLateral_Init(); turn_state=TURN_IDLE; turn_calls=fail_turn=0;
-    Bypass_ForwardDistanceMm=limit; Straight_BackwardUSStartMm=400; Straight_ForwardUSEndMm=400;
+    Bypass_ForwardDistanceMm=limit; Straight_AutoUSStartMm=400; Straight_ForwardUSEndMm=700;
     ir.left_status=ir.right_status=IR_RANGE_VALID;
 }
 static void poll(void) { step(); Lateral_Step(); SearchLateral_Step(); }
@@ -29,7 +29,7 @@ static void reading(uint32_t n) { ir.left_cm_x10=ir.right_cm_x10=n;poll(); }
 static void reach_gate(void) { encoder_delta=3715; poll();encoder_delta=0;assert(status().stage==0); }
 static void complete_back(void)
 {
-    encoder_delta=1600;poll();encoder_delta=0;
+    encoder_delta=2400;poll();encoder_delta=0;
     for(int i=0;i<10&&status().stage==4;i++)poll();
     assert(status().stage==5);
 }
@@ -51,9 +51,13 @@ int main(void)
         reading(520);assert(status().stage==3 && turn_calls==1);
         assert(radii[0]==(side?35:20)&&angles[0]==90&&directions[0]==(side?1:-1));
         turn_state=TURN_DONE;SearchLateral_Step();assert(status().stage==4);
-        int32_t target;Straight_Status(NULL,&target,NULL,NULL,NULL,NULL);assert(target==-20);
+        int32_t target;Straight_Status(NULL,&target,NULL,NULL,NULL,NULL);assert(target==-30);
         complete_back();assert(Straight_IRComparison()==STRAIGHT_IR_LT);
-        reading(400);reading(390);assert(status().stage==6 && turn_calls==2);
+        reading(400);reading(390);assert(status().stage==6 && turn_calls==1);
+        Straight_Status(NULL,&target,NULL,NULL,NULL,NULL);assert(target==(side?-20:-35));
+        encoder_delta=3000;poll();encoder_delta=0;
+        for(int i=0;i<10&&status().stage==6;i++)poll();
+        assert(status().stage==7 && turn_calls==2);
         assert(radii[1]==(side?20:35)&&directions[1]==(side?-1:1));
         turn_state=TURN_DONE;SearchLateral_Step();assert(SearchLateral_State()==SEARCH_DONE);
     }
@@ -67,7 +71,7 @@ int main(void)
     SearchLateral_Stop();reading(520);assert(SearchLateral_State()==SEARCH_ABORTED&&turn_calls==0);
     setup(1000);assert(SearchLateral_Start(1,50,50)==0);adc_fail=1;reach_gate();poll();
     assert(SearchLateral_State()==SEARCH_STRAIGHT_ERROR&&turn_calls==0);
-    for(int stage=0;stage<=6;stage++) {
+    for(int stage=0;stage<=7;stage++) {
         setup(600);assert(SearchLateral_Start(1,50,50)==0);
         if(stage>0) {
             if(stage==1) { reach_gate();reading(300);reading(310);reading(510);reading(520); }
@@ -77,6 +81,7 @@ int main(void)
                 if(stage>=4) { turn_state=TURN_DONE;SearchLateral_Step(); }
                 if(stage>=5) complete_back();
                 if(stage>=6) { reading(300);reading(310); }
+                if(stage>=7) { encoder_delta=3000;poll();encoder_delta=0;for(int i=0;i<10&&status().stage==6;i++)poll(); }
             }
         }
         assert(status().stage==stage);SearchLateral_Stop();int before=turn_calls;
@@ -85,9 +90,9 @@ int main(void)
     for(int missing=0;missing<5;missing++) {
         setup(missing==4 ? 2100 : 1000);
         if(missing==0) Bypass_ForwardDistanceMm=UINT32_MAX;
-        if(missing==1) Straight_BackwardUSStartMm=UINT32_MAX;
+        if(missing==1) Straight_AutoUSStartMm=UINT32_MAX;
         if(missing==2) Straight_ForwardUSEndMm=UINT32_MAX;
-        if(missing==3) Straight_ForwardUSEndMm=2000;
+        if(missing==3) Straight_ForwardUSEndMm=2500;
         assert(SearchLateral_Start(0,50,50)==0 && drives>0);
         assert(status().limit_mm==1000 && SearchLateral_State()==SEARCH_RUNNING);
         /* Default is frozen and triggers fallback at 100cm total travel. */

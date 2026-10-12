@@ -388,10 +388,16 @@ IR 状态与完成事件追加所选侧的 `ir_raw,ir_status,ir_age_ms,confirm,a
 
 `SEARCHLATERAL,LEFT/RIGHT,x,n`：先前进 x cm（10～200），不停地开始对应侧 RISING n 检测（左 10～50、右 10～60）。正常完成越沿后，用最小有效 IR +10 cm 执行对应侧 LATERAL。缓存侧移距离超限或读数错误报失败，不触发备用路线。
 
-启动时冻结毫米上限 `Bypass_ForwardDistanceMm + Straight_BackwardUSStartMm - Straight_ForwardUSEndMm`，使用有符号计算；任一缓存缺失，或计算结果非正、超过 2000 mm 时，使用默认总搜索距离 100 cm（1000 mm），继续启动；有效缓存组合仍优先使用。总行程包含前段 x cm；每次轮询检查任一轮编码器，达到上限先制动，再走备用路线，同一轮与 RISING 同时满足时上限优先。上限小于前段 x 时也会在前段触发。触发点不等同于制动后的精确停车距离。
+启动时冻结毫米上限 `Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + 300`，使用有符号计算；任一缓存缺失，或计算结果非正、超过 2000 mm 时，使用默认总搜索距离 100 cm（1000 mm），继续启动；有效缓存组合仍优先使用。总行程包含前段 x cm；每次轮询检查任一轮编码器，达到上限先制动，再走备用路线，同一轮与 RISING 同时满足时上限优先。上限小于前段 x 时也会在前段触发。触发点不等同于制动后的精确停车距离。
 
 RIGHT 的备用顺序为 `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` → `STRAIGHT,GOCM,-20` → `STRAIGHT,RIGHTIR,LT,50` → `TURN,LEFT,R=20,A=90`。LEFT 交换探头和转向，左半径始终 20，右半径始终 35。备用 GT 阶段使用严格读取故障策略；备用路线的 GT/LT 阈值固定为 50。
 
 支持 `SEARCHLATERAL,STATUS`、`SEARCHLATERAL,STOP`，最终输出一次 `DONE,SEARCHLATERAL,...`；状态含 stage、path=LATERAL/FALLBACK、limit_mm、ir_cm_x10 和 start_rc。阶段 0=搜索，1=正常侧移，2～6=五步备用动作。任一阶段 STOP/失败中止后续动作；FAST/批次执行器等待整个命令完成。FAST LEFT2 使用 `SEARCHLATERAL,RIGHT,50,50`，RIGHT2 使用 LEFT；完成任一路径后，由 FAST 执行原来的 `STRAIGHT,UNTILUS,15`。序列期间另发全局 STOP 取消，SEARCHLATERAL,STATUS 可查询。
 
 备用动作的实际字符串数组位于 `Core/Src/control/search_lateral_control.c`：`search_right_fallback_commands` 用于 FAST LEFT2，`search_left_fallback_commands` 用于 FAST RIGHT2。控制器按数组顺序解析并执行，修改顺序、参数或增减受支持的直行/转弯命令会改变实际路线；阶段完成和 STOP 根据当前命令类型处理。
+
+### AUTO 超声接近
+
+`STRAIGHT,AUTO,UNTILUS,n` 等待连续两次有效起始超声读数，要求距离差不超过 50 mm，且同处目标的一侧：大于 n 前进，小于 n 后退，相等确认后原地完成。选择后方向锁定，沿用既有减速、停车提前量、制动及行程/超时限制。选向前收到无效/无回波样本时默认选择后退，按现有无回波策略慢速倒退，AUTO 开始值缓存为 0；恢复回波后保持后退方向，继续确认停车。选向后无回波沿已选方向慢速行驶。默认 `STRAIGHT,UNTILUS,n` 仍为前进，显式 FORWARD/BACKWARD 行为保留。
+
+AUTO 首尾毫米缓存分别为 `Straight_AutoUSStartMm`、`Straight_AutoUSEndMm`，每次 AUTO 接受时清空，仅更新 AUTO 一对，不覆盖固定方向缓存；开始值为首个有效起始样本，开局无效回波采用 0；结束值为成功停车的条件样本，未取得或失败为 UINT32_MAX。接受回复 dir=AUTO，成功 DONE 的 dir 为实际 FORWARD/BACKWARD 或原地 NONE。SEARCHLATERAL 上限改用 AUTO 开始值，并保留源码的 +300 mm 补偿；无有效组合仍用默认 100 cm。FAST LEFT1/RIGHT1 末尾改用 AUTO，目标分别保留 32/34 cm。

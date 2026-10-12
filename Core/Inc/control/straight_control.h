@@ -27,10 +27,12 @@ int Straight_StartCm(int32_t target_cm);
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us);
 /* 0 = normal gyro steering, otherwise the last accepted fixed pulse. */
 uint32_t Straight_FixedSteeringUs(void);
-/* Default forward; explicit direction is +1=FORWARD, -1=BACKWARD.
+/* Default forward; direction is +1=FORWARD, -1=BACKWARD, 0=AUTO.
  * No echo: creep in the requested direction and continue acquisition.
  * Direction never changes; STOP, stall, timeout and travel bounds remain. */
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm);
+/* AUTO confirms valid starting distance; missing starting echo selects reverse creep. */
+int Straight_StartUntilUltrasonicAutoCm(int32_t threshold_cm);
 int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction);
 typedef enum {
     STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT,
@@ -64,6 +66,7 @@ int Straight_IRStatus(int32_t *threshold_cm, uint32_t *cm_x10);
 extern uint32_t Straight_LeftIRStopCmX10;
 extern uint32_t Straight_RightIRStopCmX10;
 /* First fresh valid US sample before drive for each UNTILUS gear, mm.
+ * BACKWARD caches zero when startup has no valid echo; recovery preserves it.
  * Selected cache resets on accepted start; UINT32_MAX means unavailable. */
 extern uint32_t Straight_ForwardUSStartMm;
 extern uint32_t Straight_BackwardUSStartMm;
@@ -72,6 +75,9 @@ extern uint32_t Straight_BackwardUSStartMm;
  * UINT32_MAX = unavailable, aborted or failed; not a post-brake remeasurement. */
 extern uint32_t Straight_ForwardUSEndMm;
 extern uint32_t Straight_BackwardUSEndMm;
+/* AUTO owns this independent start/end pair, regardless of selected gear. */
+extern uint32_t Straight_AutoUSStartMm;
+extern uint32_t Straight_AutoUSEndMm;
 /* Returns 1 for UNTILUS mode. Unavailable clearance = UINT32_MAX (infinity).
  * Nonzero status means invalid/stale; missing echoes do not stop motion. */
 int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,

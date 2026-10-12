@@ -113,6 +113,53 @@ static void test_untilus_start_takeup(void)
     puts("PASS: UNTILUS backlash positioning precedes drive in both gears");
 }
 
+static void test_untilus_auto(void)
+{
+    for(int dir=-1;dir<=1;dir++) {
+        reset(); Straight_ForwardUSStartMm=700;Straight_ForwardUSEndMm=600;
+        Straight_BackwardUSStartMm=100;Straight_BackwardUSEndMm=200;
+        assert(Straight_StartUntilUltrasonicAutoCm(35)==0 && drives==0);
+        uint32_t first=dir<0?200:dir>0?500:350;
+        echo(first,0);assert(drives==0 && Straight_AutoUSStartMm==first);
+        echo(first,0);
+        if(dir) {
+            assert(drives>0 && mock_direction==dir);
+            echo(0,-1);assert(Straight_State()==STRAIGHT_RUNNING && mock_direction==dir);
+            echo(dir>0?390:310,0);echo(dir>0?380:320,0);
+        }
+        assert(Straight_State()==STRAIGHT_DONE && Straight_AutoUSEndMm==(dir>0?380U:dir<0?320U:350U));
+        assert(Straight_ForwardUSStartMm==700 && Straight_ForwardUSEndMm==600);
+        assert(Straight_BackwardUSStartMm==100 && Straight_BackwardUSEndMm==200);
+        assert(Straight_StartUntilUltrasonicAutoCm(35)==0);
+        assert(Straight_AutoUSStartMm==UINT32_MAX && Straight_AutoUSEndMm==UINT32_MAX);
+        echo(0,-1);Straight_Stop();assert(Straight_AutoUSEndMm==UINT32_MAX);
+    }
+    reset();assert(Straight_StartUntilUltrasonicAutoCm(35)==0);
+    echo(500,0);echo(200,0);assert(drives==0);echo(210,0);assert(mock_direction==-1);
+    Straight_Stop();
+    reset();assert(Straight_StartUntilUltrasonicAutoCm(35)==0);
+    tick=30000;Straight_Step();assert(Straight_State()==STRAIGHT_TIMEOUT && drives==0);
+    reset();Straight_BackwardUSStartMm=123;Straight_BackwardUSEndMm=234;
+    assert(Straight_StartUntilUltrasonicAutoCm(35)==0);
+    echo(0,-1);assert(drives>0 && mock_direction==-1 && Straight_AutoUSStartMm==0);
+    assert(last_left_pwm==US_FINAL_APPROACH_PWM && last_right_pwm==US_FINAL_APPROACH_PWM);
+    encoder_delta=6;echo(0,-1);encoder_delta=0;
+    echo(200,0);assert(mock_direction==-1 && Straight_AutoUSStartMm==0);
+    echo(310,0);assert(Straight_State()==STRAIGHT_RUNNING);
+    echo(320,0);assert(Straight_State()==STRAIGHT_DONE && Straight_AutoUSEndMm==320);
+    assert(Straight_BackwardUSStartMm==123 && Straight_BackwardUSEndMm==234);
+    reset();assert(Straight_StartUntilUltrasonicAutoCm(35)==0);
+    echo(0,-1);Straight_Stop();assert(Straight_AutoUSStartMm==0 && Straight_AutoUSEndMm==UINT32_MAX);
+    reset();assert(Straight_StartUntilUltrasonicDirectionCm(35,-1)==0);
+    echo(0,-1);assert(Straight_BackwardUSStartMm==0 && mock_direction==-1);
+    encoder_delta=6;echo(0,-1);encoder_delta=0;
+    echo(200,0);assert(Straight_BackwardUSStartMm==0);
+    echo(310,0);echo(320,0);
+    assert(Straight_State()==STRAIGHT_DONE && Straight_BackwardUSEndMm==320);
+    assert(Straight_AutoUSStartMm==UINT32_MAX);
+    puts("PASS: AUTO selection, zero-cache missing-echo reverse creep/recovery, independent caches, STOP and timeout");
+}
+
 static void test_untilus_direction_caches(void)
 {
     reset();
@@ -145,7 +192,7 @@ static void test_untilus_bidirectional(void)
     reset(); assert(Straight_StartUntilUltrasonicCm(35)==0);
     echo(500,0); echo(500,0); assert(mock_direction==1);
     Straight_Stop(); assert(Straight_State()==STRAIGHT_ABORTED);
-    reset(); assert(Straight_StartUntilUltrasonicDirectionCm(35,0)==-2);
+    reset(); assert(Straight_StartUntilUltrasonicDirectionCm(35,2)==-2);
     assert(Straight_StartUntilUltrasonicDirectionCm(4,1)==-2);
     assert(Straight_StartUntilUltrasonicDirectionCm(201,-1)==-2);
     for (int direction=-1; direction<=1; direction+=2)
@@ -343,6 +390,7 @@ int main(void)
     test_ir_low_speed();
     test_untilus_start_takeup();
     test_untilus_direction_caches();
+    test_untilus_auto();
     test_untilus_bidirectional();
     test_ir_edges();
     test_gocm_ir();

@@ -118,3 +118,12 @@ Cache interfaces: Bypass_ForwardDistanceMm is shared by both sides and stores ro
 
 UNTILUS 现有四个毫米缓存：前进 `Straight_ForwardUSStartMm` / `Straight_ForwardUSEndMm`，后退 `Straight_BackwardUSStartMm` / `Straight_BackwardUSEndMm`。默认 `STRAIGHT,UNTILUS,n` 与显式 FORWARD 共用前进缓存。接受命令时只清空所选方向的一对缓存；开始值为起步前首个新鲜有效样本，结束值为正常完成时的最终条件样本（与 DONE 回报一致，在制动前采集，未重新测量停车后距离）。STOP 或失败不会写成功结束值，未获得对应值为 UINT32_MAX。
 UNTILUS has separate start/end pairs per gear, in mm. Implicit direction uses the FORWARD pair. Only the selected pair resets at accepted start. End caches hold the successful final condition sample, matching DONE; they are not fresh post-brake measurements. STOP/fault leave the selected end unavailable (UINT32_MAX).
+
+AUTO 独立首尾缓存为 Straight_AutoUSStartMm / Straight_AutoUSEndMm（毫米），不覆盖前进/后退缓存。SEARCHLATERAL 使用 AUTO 开始值替代后退开始值，保留额外 300 mm 补偿；FAST 第一组以 AUTO 结束。
+AUTO uses independent start/end mm caches and preserves fixed-gear caches. SEARCHLATERAL uses AUTO start clearance while retaining the extra 300 mm allowance.
+
+AUTO 开局收到无效回波时默认慢速倒退，并将 Straight_AutoUSStartMm 设为 0，恢复测量后不改写该值，也不切换方向。初始化/触发硬件故障、STOP、失速、超时及行程限制仍终止运动。
+AUTO starts reverse creep on an invalid initial echo and stores zero in its start cache. Recovery does not overwrite it or reverse gear. Driver errors and existing motion bounds remain active.
+
+显式 BACKWARD 开局无有效回波时，Straight_BackwardUSStartMm 同样缓存为 0；慢速倒退恢复回波后保持 0，结束缓存规则不变。
+Explicit BACKWARD also caches zero for invalid starting echoes, retaining it after recovery; end-cache behavior is unchanged.
