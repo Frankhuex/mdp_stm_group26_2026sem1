@@ -43,6 +43,7 @@ static uint16_t sc_fixed_steer_us;
 static uint8_t sc_until_us;
 static uint8_t sc_ir_strict_gt;
 static int32_t sc_ir_gate_cm;
+static uint32_t sc_ir_search_limit_mm;
 static uint8_t sc_ir_active;
 static uint32_t sc_ir_first_edge_cm_x10;
 static uint8_t sc_ir_first_edge_valid;
@@ -256,11 +257,13 @@ static uint8_t StopWithHeadingSamples(void)
 
 static void FinishIR(straight_state_t state)
 {
-    if (state == STRAIGHT_DONE)
+    if (state == STRAIGHT_DONE || state == STRAIGHT_SEARCH_LIMIT)
     {
         /* Keep the condition-triggering sample before braking. */
-        if (sc_ir_mode == 1U) Straight_LeftIRStopCmX10 = sc_ir_cm_x10;
-        else if (sc_ir_mode == 2U) Straight_RightIRStopCmX10 = sc_ir_cm_x10;
+        if (state == STRAIGHT_DONE) {
+            if (sc_ir_mode == 1U) Straight_LeftIRStopCmX10 = sc_ir_cm_x10;
+            else if (sc_ir_mode == 2U) Straight_RightIRStopCmX10 = sc_ir_cm_x10;
+        }
         if (!StopWithHeadingSamples())
         {
             state = STRAIGHT_STALL;
@@ -506,6 +509,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     sc_ir_mode = ir_mode;
     sc_ir_raw = UINT32_MAX; sc_ir_range = IR_RANGE_ERROR; sc_ir_last_tick = HAL_GetTick();
     sc_ir_gate_cm = gate_cm;
+    sc_ir_search_limit_mm = 0U;
     sc_ir_active = gate_cm == 0;
     sc_ir_strict_gt = strict_gt;
     sc_ir_comparison = comparison;
@@ -652,6 +656,15 @@ int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
 
 uint32_t Straight_FixedSteeringUs(void) { return sc_fixed_steer_us; }
 
+int Straight_StartCmThenIRBounded(int32_t distance_cm, uint8_t side,
+    straight_ir_comparison_t comparison, int32_t threshold_cm, uint32_t limit_mm)
+{
+    if (!limit_mm || limit_mm > IR_COMMAND_MAX_TRAVEL_CM * 10U || distance_cm <= 0) return -2;
+    int rc = Straight_StartCmThenIR(distance_cm, side, comparison, threshold_cm);
+    if (!rc) sc_ir_search_limit_mm = limit_mm;
+    return rc;
+}
+
 int Straight_StartUntilIRGreaterCm(int32_t threshold_cm, uint8_t side)
 {
     return Straight_StartUntilIRCm(threshold_cm, side, STRAIGHT_IR_GT);
@@ -737,6 +750,7 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
     sc_prev_enc = RobotHW_EncoderSnapshotRead();
     sc_until_us = 1U;
     sc_ir_mode = 0U;
+    sc_ir_search_limit_mm = 0U;
     sc_us_moving = 0U;
     sc_us_start_reading_cached = 0U;
     if (direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
@@ -975,6 +989,16 @@ static void Straight_StepInternal(void)
         return;
     }
 
+    /* Include pending encoder increments on every poll, before IR completion.
+     * Either wheel reaching the bound stops; the preceding GOCM counts too. */
+    if (sc_ir_mode && sc_ir_search_limit_mm) {
+        RobotHW_EncoderSnapshot snapshot = sc_prev_enc;
+        RobotHW_EncoderDelta pending = RobotHW_EncoderDeltaRead(&snapshot);
+        if (((float)sc_total_left_counts + abs((int)pending.left_delta)) * 10.0f / LEFT_COUNTS_PER_CM >= sc_ir_search_limit_mm ||
+            ((float)sc_total_right_counts + abs((int)pending.right_delta)) * 10.0f / RIGHT_COUNTS_PER_CM >= sc_ir_search_limit_mm) {
+            FinishIR(STRAIGHT_SEARCH_LIMIT); return;
+        }
+    }
     if (sc_ir_mode && sc_ir_active && HAL_GetTick() - sc_ir_last_tick >= IR_COMMAND_SAMPLE_MS)
     {
         uint8_t result = ReadIRStopCondition();

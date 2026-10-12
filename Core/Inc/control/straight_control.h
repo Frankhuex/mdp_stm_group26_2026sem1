@@ -12,7 +12,8 @@ typedef enum
     STRAIGHT_TIMEOUT,
     STRAIGHT_SENSOR_ERROR,
     STRAIGHT_DISTANCE_LIMIT,
-    STRAIGHT_STALL
+    STRAIGHT_STALL,
+    STRAIGHT_SEARCH_LIMIT /* bounded IR search exhausted, after braking */
 } straight_state_t;
 
 /* Production non-blocking controller used by the command interface. */
@@ -43,6 +44,8 @@ int Straight_StartUntilIRDirectionCm(int32_t threshold_cm, uint8_t side,
                                      straight_ir_comparison_t comparison, int8_t direction);
 int Straight_StartCmThenIR(int32_t distance_cm, uint8_t side,
                            straight_ir_comparison_t comparison, int32_t threshold_cm);
+int Straight_StartCmThenIRBounded(int32_t distance_cm, uint8_t side,
+    straight_ir_comparison_t comparison, int32_t threshold_cm, uint32_t limit_mm);
 uint8_t Straight_IRFirstEdgeReading(uint32_t *cm_x10);
 uint8_t Straight_IRGateStatus(int32_t *distance_cm, uint8_t *active);
 void Straight_IRDiagnostics(uint32_t *raw, int *range_status, uint32_t *age_ms,

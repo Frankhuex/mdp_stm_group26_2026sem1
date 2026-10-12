@@ -423,3 +423,15 @@ keeping the board powered and without resetting it.
 `LEFTIR,GET` / `RIGHTIR,GET` acquire one fresh measurement of the selected IR side while stationary. Reply: `LEFTIR/RIGHTIR,cm=<decimal|NEAR|FAR|INVALID>,raw=<ADC|NA>,mv=<millivolts|NA>,status=<VALID|NEAR|FAR|ERROR>,rc=<driver return code>`. Out-of-range samples report NEAR/FAR rather than a fabricated numerical distance; ADC failures return ERROR and rc!=0. Motion returns ERR,BUSY. Reading does not change IR edge phase, confirmation counters or cached stopping readings.
 
 IR status and completion append `ir_raw,ir_status,ir_age_ms,confirm,armed` for the selected side. These are the last control sample, not a fresh acquisition. An unavailable ADC raw is UINT32_MAX; gated commands have no IR sample before activation.
+
+### Bounded edge search: SEARCHLATERAL
+
+`SEARCHLATERAL,LEFT/RIGHT,x,n` drives forward x cm (10..200), then continuously detects the selected IR RISING n (LEFT 10..50, RIGHT 10..60). Successful edge completion performs lateral using the minimum finite IR +10 cm. Invalid/oversized lateral displacement and acquisition faults terminate the command rather than selecting fallback.
+
+At acceptance, freeze the mm limit `Bypass_ForwardDistanceMm + Straight_BackwardUSStartMm - Straight_ForwardUSEndMm` using signed arithmetic. Missing caches, nonpositive results or limits above 2000 mm select the default total search distance of 100 cm (1000 mm), without rejecting startup. A valid cached combination takes precedence. Total search travel includes the initial x cm. Every poll checks either encoder before edge completion; reaching the bound brakes and selects fallback, including before the IR gate. Distance wins if both conditions occur in one poll. The trigger bound does not guarantee zero braking overrun.
+
+RIGHT fallback: `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` → `STRAIGHT,GOCM,-20` → `STRAIGHT,RIGHTIR,LT,50` → `TURN,LEFT,R=20,A=90`. LEFT mirrors sensor/steering sides, retaining left radius 20 and right radius 35. Fallback GT uses strict acquisition-error handling; both fallback IR thresholds are fixed at 50.
+
+STATUS and STOP are supported. One terminal DONE,SEARCHLATERAL reports state, stage, path=LATERAL/FALLBACK, limit_mm, ir_cm_x10 and start_rc. Stage 0 searches, 1 performs normal lateral, 2..6 execute fallback. Any child failure or STOP cancels later stages. FAST/batches wait for the whole composite. LEFT2 uses SEARCHLATERAL,RIGHT,50,50 and RIGHT2 uses LEFT, then executes its original STRAIGHT,UNTILUS,15 after either successful path. Use global STOP during sequences; SEARCHLATERAL,STATUS remains available.
+
+Fallback routes are actual executable string arrays in Core/Src/control/search_lateral_control.c: search_right_fallback_commands for FAST LEFT2, search_left_fallback_commands for FAST RIGHT2. Order and parameters drive execution; child completion and STOP follow the parsed motion type. Supported rows are STRAIGHT,GOCM, STRAIGHT,LEFTIR/RIGHTIR,GT/LT/RISING/FALLING and TURN,LEFT/RIGHT,R=...,A=....

@@ -37,12 +37,13 @@ prefix = r'''
 #define TURN_DONE 2
 #define LATERAL_DONE 2
 #define BYPASS_DONE 2
+#define SEARCH_DONE 2
 static char rx_line[CMD_RX_LINE_SIZE], inline_batch_line[CMD_RX_LINE_SIZE];
 static uint32_t rx_line_len; static uint8_t rx_discard,previous_byte;
 static uint8_t sequence_mode,sequence_cancelled,sequence_row_dispatch,sequence_log_active;
 static uint8_t pending_motion_done_suppressed,command_output_suppressed,command_rejected;
 static const char *sequence_row_failure,*sequence_log_result;
-typedef enum {PENDING_MOTION_NONE,PENDING_MOTION_STRAIGHT,PENDING_MOTION_UNTILUS,PENDING_MOTION_TURN,PENDING_MOTION_LATERAL,PENDING_MOTION_BYPASS} pending_motion_t;
+typedef enum {PENDING_MOTION_NONE,PENDING_MOTION_STRAIGHT,PENDING_MOTION_UNTILUS,PENDING_MOTION_TURN,PENDING_MOTION_LATERAL,PENDING_MOTION_BYPASS,PENDING_MOTION_SEARCHLATERAL} pending_motion_t;
 typedef void (*command_motion_observer_t)(uint32_t,const char*);
 static pending_motion_t pending_motion;
 static int moving,steps,executed,stop_at,fail_move; static uint32_t now;
@@ -53,7 +54,8 @@ static const char *CommandInterface_RunSequenceRows(const char *const[],uint32_t
 static void Cmd_Send(const char*s){strcat(output,s);} static void Cmd_Reject(const char*s){command_rejected=1;Cmd_Send(s);Cmd_Send("\r\n");}
 static uint8_t AnyMotionRunning(void){return moving!=0;}
 static int Straight_State(void){return fail_move?3:2;} static int Turn_State(void){return 2;}
-static int Lateral_State(void){return 2;} static int Bypass_State(void){return 2;}
+static int Lateral_State(void){return 2;} static int Bypass_State(void){return 2;} static int SearchLateral_State(void){return 2;}
+static const char *SearchLateralStateText(int s){(void)s;return "DONE";}
 static const char *StraightStateText(int s){return s==2?"DONE":"SENSOR_ERROR";}
 static const char *TurnStateText(int s){(void)s;return "DONE";} static const char *LateralStateText(int s){(void)s;return "DONE";} static const char *BypassStateText(int s){(void)s;return "DONE";}
 static uint32_t HAL_GetTick(void){return now;}

@@ -383,3 +383,15 @@ DONE,LOOP,state=<reason>,index=<1..4>,count=4
 `LEFTIR,GET`／`RIGHTIR,GET` 在停车状态现场读取对应侧 IR 一次。回报 `LEFTIR/RIGHTIR,cm=<小数|NEAR|FAR|INVALID>,raw=<原始ADC|NA>,mv=<毫伏|NA>,status=<VALID|NEAR|FAR|ERROR>,rc=<驱动返回码>`。近／远超量程使用 NEAR/FAR，不伪造数值距离；ADC 失败回报 ERROR 和非零 rc。运动中返回 ERR,BUSY；读取不修改越沿阶段、确认计数或停车缓存。
 
 IR 状态与完成事件追加所选侧的 `ir_raw,ir_status,ir_age_ms,confirm,armed`，分别表示原始 ADC、VALID/NEAR/FAR/ERROR 状态、样本年龄、连续确认计数和越沿首阶段是否确认。均为控制器最后采样，查询不额外采样；原始 ADC 不可用时为 UINT32_MAX，带距离门槛的命令在启用检测前没有 IR 样本。
+
+### 搜索侧移与距离兜底 SEARCHLATERAL
+
+`SEARCHLATERAL,LEFT/RIGHT,x,n`：先前进 x cm（10～200），不停地开始对应侧 RISING n 检测（左 10～50、右 10～60）。正常完成越沿后，用最小有效 IR +10 cm 执行对应侧 LATERAL。缓存侧移距离超限或读数错误报失败，不触发备用路线。
+
+启动时冻结毫米上限 `Bypass_ForwardDistanceMm + Straight_BackwardUSStartMm - Straight_ForwardUSEndMm`，使用有符号计算；任一缓存缺失，或计算结果非正、超过 2000 mm 时，使用默认总搜索距离 100 cm（1000 mm），继续启动；有效缓存组合仍优先使用。总行程包含前段 x cm；每次轮询检查任一轮编码器，达到上限先制动，再走备用路线，同一轮与 RISING 同时满足时上限优先。上限小于前段 x 时也会在前段触发。触发点不等同于制动后的精确停车距离。
+
+RIGHT 的备用顺序为 `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` → `STRAIGHT,GOCM,-20` → `STRAIGHT,RIGHTIR,LT,50` → `TURN,LEFT,R=20,A=90`。LEFT 交换探头和转向，左半径始终 20，右半径始终 35。备用 GT 阶段使用严格读取故障策略；备用路线的 GT/LT 阈值固定为 50。
+
+支持 `SEARCHLATERAL,STATUS`、`SEARCHLATERAL,STOP`，最终输出一次 `DONE,SEARCHLATERAL,...`；状态含 stage、path=LATERAL/FALLBACK、limit_mm、ir_cm_x10 和 start_rc。阶段 0=搜索，1=正常侧移，2～6=五步备用动作。任一阶段 STOP/失败中止后续动作；FAST/批次执行器等待整个命令完成。FAST LEFT2 使用 `SEARCHLATERAL,RIGHT,50,50`，RIGHT2 使用 LEFT；完成任一路径后，由 FAST 执行原来的 `STRAIGHT,UNTILUS,15`。序列期间另发全局 STOP 取消，SEARCHLATERAL,STATUS 可查询。
+
+备用动作的实际字符串数组位于 `Core/Src/control/search_lateral_control.c`：`search_right_fallback_commands` 用于 FAST LEFT2，`search_left_fallback_commands` 用于 FAST RIGHT2。控制器按数组顺序解析并执行，修改顺序、参数或增减受支持的直行/转弯命令会改变实际路线；阶段完成和 STOP 根据当前命令类型处理。
