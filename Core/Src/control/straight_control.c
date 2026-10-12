@@ -57,6 +57,11 @@ static uint32_t sc_ir_cm_x10;
 static uint32_t sc_ir_last_tick;
 uint32_t Straight_LeftIRStopCmX10 = UINT32_MAX;
 uint32_t Straight_RightIRStopCmX10 = UINT32_MAX;
+uint32_t Straight_ForwardUSStartMm = UINT32_MAX;
+uint32_t Straight_BackwardUSStartMm = UINT32_MAX;
+uint32_t Straight_ForwardUSEndMm = UINT32_MAX;
+uint32_t Straight_BackwardUSEndMm = UINT32_MAX;
+static uint8_t sc_us_start_reading_cached;
 static uint8_t sc_us_moving;
 static int32_t sc_us_threshold_cm;
 static ultrasonic_sample_t sc_us_sample;
@@ -423,6 +428,9 @@ void Straight_Init(void)
     sc_us_stop_reading_valid = 0U;
     Straight_LeftIRStopCmX10 = UINT32_MAX;
     Straight_RightIRStopCmX10 = UINT32_MAX;
+    Straight_ForwardUSStartMm = Straight_BackwardUSStartMm = UINT32_MAX;
+    Straight_ForwardUSEndMm = Straight_BackwardUSEndMm = UINT32_MAX;
+    sc_us_start_reading_cached = 0U;
     sc_fixed_steer_us = 0U;
     TraceReset();
     MotionHeading_Reset();
@@ -717,7 +725,8 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
         return -2;
     MotionHeading_Prepare();
     sc_braking = 0U;
-    RobotHW_ServoSetUs(StraightCenterUs(direction));
+    /* Match GOCM: approach the straight centre from the low-pulse side. */
+    RobotHW_ServoSetUsTakeup(StraightCenterUs(direction));
     if (UltrasonicSensor_Init() != 0) { MotionHeading_Degrade(); return -1; }
     prep_rc = RobotHW_PrepareMotionSensors();
     if (prep_rc != 0) { MotionHeading_Degrade(); return prep_rc; }
@@ -729,6 +738,9 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
     sc_until_us = 1U;
     sc_ir_mode = 0U;
     sc_us_moving = 0U;
+    sc_us_start_reading_cached = 0U;
+    if (direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
+    else Straight_BackwardUSStartMm = Straight_BackwardUSEndMm = UINT32_MAX;
     sc_us_threshold_cm = threshold_cm;
     sc_us_stop_reading_valid = 0U;
     sc_dir = direction;
@@ -777,6 +789,12 @@ static void FinishUltrasonic(straight_state_t state)
     }
     UltrasonicSensor_Cancel();
     FinishIR(state);
+    if (sc_state == STRAIGHT_DONE && sc_us_stop_reading_valid)
+    {
+        /* Use the requested gear even when already reached without driving. */
+        if (sc_dir > 0) Straight_ForwardUSEndMm = sc_us_stop_mm;
+        else Straight_BackwardUSEndMm = sc_us_stop_mm;
+    }
 }
 
 /* Unknown clearance is infinity for UNTILUS. Keep this policy out of the
@@ -843,6 +861,12 @@ static void StepUltrasonic(void)
         {
             uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
             sc_us_fail_count = 0U;
+            if (!sc_us_moving && !sc_us_start_reading_cached)
+            {
+                if (sc_dir > 0) Straight_ForwardUSStartMm = sample.distance_mm;
+                else Straight_BackwardUSStartMm = sample.distance_mm;
+                sc_us_start_reading_cached = 1U;
+            }
             if (!sc_us_moving)
             {
                 uint8_t already_reached = sc_dir > 0

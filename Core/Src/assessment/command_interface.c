@@ -107,7 +107,7 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_approach_commands[] =
 {
-    "STRAIGHT,UNTILUS,28",
+    "STRAIGHT,UNTILUS,31",
 };
 static const char *const fast_left1_commands[] =
 {
@@ -121,7 +121,7 @@ static const char *const fast_left1_commands[] =
     // "STRAIGHT,GOCM,-33",
 
     "BYPASS,LEFT,25",
-    "STRAIGHT,BACKWARD,UNTILUS,35",
+    "STRAIGHT,BACKWARD,UNTILUS,32",
 };
 static const char *const fast_left2_commands[] =
 {
@@ -145,8 +145,8 @@ static const char *const fast_right1_commands[] =
     // "TURN,RIGHT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
 
-    "BYPASS,RIGHT,28",
-    "STRAIGHT,BACKWARD,UNTILUS,35",
+    "BYPASS,RIGHT,25",
+    "STRAIGHT,BACKWARD,UNTILUS,34",
 };
 static const char *const fast_right2_commands[] =
 {

@@ -5,7 +5,7 @@
  * Applies to both wheels, forward/reverse and kickstart; excludes braking
  * and steering. Actual vehicle speed is not proportional to PWM. */
 #ifndef MOTOR_SPEED_SCALE_PERCENT
-#define MOTOR_SPEED_SCALE_PERCENT       140U
+#define MOTOR_SPEED_SCALE_PERCENT       150U
 #endif
 #if MOTOR_SPEED_SCALE_PERCENT < 1 || MOTOR_SPEED_SCALE_PERCENT > 200
 #error "MOTOR_SPEED_SCALE_PERCENT must be between 1 and 200"

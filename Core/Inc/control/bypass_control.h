@@ -15,6 +15,9 @@ typedef struct {
     int start_rc;
     turn_state_t turn_state;
 } bypass_status_t;
+/* Planned longitudinal displacement from rounded arc angles, mm.
+ * Shared by LEFT/RIGHT; UINT32_MAX until a successful start. Not odometry. */
+extern uint32_t Bypass_ForwardDistanceMm;
 void Bypass_Init(void);
 int Bypass_Start(uint8_t side, int32_t distance_cm);
 void Bypass_Step(void);

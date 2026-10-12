@@ -137,7 +137,7 @@
 #define US_MAX_THRESHOLD_CM              200
 #define US_CRUISE_PWM                    3500U
 #define US_APPROACH_PWM                  2400U
-#define US_FINAL_APPROACH_PWM            1800U
+#define US_FINAL_APPROACH_PWM            2100U
 #define US_FINAL_APPROACH_MARGIN_MM       200U
 /* Keep braking until both encoders stay quiet, with a bounded release time. */
 #define US_BRAKE_QUIET_MS                  60U

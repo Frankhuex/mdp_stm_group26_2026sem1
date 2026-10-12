@@ -4,13 +4,14 @@
 #include "control/turn_tuning.h"
 #include <math.h>
 static bypass_status_t bc;
+uint32_t Bypass_ForwardDistanceMm = UINT32_MAX;
 static int StartArc(void)
 {
     uint8_t side = bc.stage == 2U ? !bc.side : bc.side;
     return Turn_StartRadiusAngle(side ? CMD_RIGHT_MIN_RADIUS_CM : CMD_LEFT_SOFT_MIN_RADIUS_CM,
                                 bc.angle_deg * (bc.stage == 2U ? 2 : 1), side ? 1 : -1);
 }
-void Bypass_Init(void) { bypass_status_t empty = {0}; bc = empty; }
+void Bypass_Init(void) { bypass_status_t empty = {0}; bc = empty; Bypass_ForwardDistanceMm = UINT32_MAX; }
 int Bypass_Start(uint8_t side, int32_t distance_cm)
 {
     if (bc.state == BYPASS_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
@@ -22,6 +23,9 @@ int Bypass_Start(uint8_t side, int32_t distance_cm)
     if (angle < CMD_MIN_ANGLE_DEG || angle > 90 || 2 * angle > CMD_MAX_ANGLE_DEG) return -2;
     bc.side = side; bc.stage = 1U; bc.distance_cm = distance_cm; bc.angle_deg = angle;
     bc.start_rc = StartArc(); bc.turn_state = Turn_State();
+    if (!bc.start_rc)
+        Bypass_ForwardDistanceMm = (uint32_t)lroundf(2.0f * radius_sum * 10.0f *
+            sinf(angle * (3.14159265358979323846f / 180.0f)));
     bc.state = bc.start_rc ? BYPASS_START_ERROR : BYPASS_RUNNING;
     return bc.start_rc;
 }

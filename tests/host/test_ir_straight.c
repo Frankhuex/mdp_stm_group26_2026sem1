@@ -2,12 +2,13 @@
 #include <assert.h>
 #include <stdio.h>
 #include "control/straight_control.h"
+#include "control/straight_tuning.h"
 #include "control/motion_heading.h"
 #include "drivers/robot_hw.h"
 #include "sensors/ir_sensor.h"
 #include "sensors/ultrasonic_sensor.h"
 static uint32_t tick;
-static int drives, adc_fail, ir_reads;
+static int drives, adc_fail, ir_reads, mock_takeups;
 static uint32_t last_left_pwm, last_right_pwm;
 static int16_t encoder_delta;
 static uint32_t mock_brake_motion_ms;
@@ -30,7 +31,7 @@ void RobotHW_MotorBrakeRelease(void)
 }
 void RobotHW_ServoCenter(void) { mock_servo = SERVO_CENTER_US; }
 void RobotHW_ServoSetUs(uint32_t x) { mock_servo = x; }
-void RobotHW_ServoSetUsTakeup(uint32_t x) { mock_servo = x; }
+void RobotHW_ServoSetUsTakeup(uint32_t x) { mock_takeups++; mock_servo = x; }
 uint32_t RobotHW_ServoGetUs(void) { return mock_servo; }
 uint32_t RobotHW_ServoCenterUs(void) { return SERVO_CENTER_US; }
 int RobotHW_PrepareMotionSensors(void) { mock_yaw = 0.0f; return mock_prepare_rc; }
@@ -78,7 +79,7 @@ static void reset(void)
     IRSensorDistanceReading zero = {0};
     ultrasonic_sample_t us_zero = {0};
     mock_ultrasonic = us_zero;
-    Straight_Init();MotionHeading_SetEnabled(1U);tick=0;drives=0;adc_fail=0;ir_reads=0;encoder_delta=0;
+    Straight_Init();MotionHeading_SetEnabled(1U);tick=0;drives=0;adc_fail=0;ir_reads=0;encoder_delta=0;mock_takeups=0;
     mock_yaw = mock_rate = mock_brake_rate = mock_last_rate = 0.0f;
     mock_gyro_ok = 1U; mock_braking = mock_brake_sample_pending = 0U;
     mock_servo = mock_drive_servo = SERVO_CENTER_US;
@@ -95,6 +96,50 @@ static void echo(uint32_t mm, int result)
     mock_ultrasonic.sequence++;
     step();
 }
+static void test_untilus_start_takeup(void)
+{
+    for (int dir=-1; dir<=1; dir+=2) {
+        reset();
+        assert(Straight_StartUntilUltrasonicDirectionCm(35,dir)==0);
+        assert(mock_takeups==1 && drives==0);
+        assert(Straight_ForwardUSStartMm==UINT32_MAX && Straight_BackwardUSStartMm==UINT32_MAX);
+        echo(dir>0 ? 500 : 200,0); assert(drives==0);
+        assert((dir>0 ? Straight_ForwardUSStartMm : Straight_BackwardUSStartMm)==(dir>0 ? 500U : 200U));
+        assert((dir>0 ? Straight_BackwardUSStartMm : Straight_ForwardUSStartMm)==UINT32_MAX);
+        echo(dir>0 ? 500 : 200,0);
+        assert(drives>0 && mock_direction==dir && mock_takeups==1);
+        Straight_Stop();
+    }
+    puts("PASS: UNTILUS backlash positioning precedes drive in both gears");
+}
+
+static void test_untilus_direction_caches(void)
+{
+    reset();
+    assert(Straight_StartUntilUltrasonicDirectionCm(35,-1)==0);
+    echo(200,0); echo(210,0); echo(300,0); echo(310,0);
+    assert(Straight_State()==STRAIGHT_DONE);
+    assert(Straight_BackwardUSStartMm==200 && Straight_BackwardUSEndMm==310);
+    assert(Straight_ForwardUSStartMm==UINT32_MAX && Straight_ForwardUSEndMm==UINT32_MAX);
+    for(int explicit_dir=0;explicit_dir<2;explicit_dir++) {
+        assert((explicit_dir ? Straight_StartUntilUltrasonicDirectionCm(35,1)
+                             : Straight_StartUntilUltrasonicCm(35))==0);
+        assert(Straight_ForwardUSStartMm==UINT32_MAX && Straight_ForwardUSEndMm==UINT32_MAX);
+        echo(500,0); echo(490,0); echo(390,0); echo(380,0);
+        assert(Straight_State()==STRAIGHT_DONE);
+        assert(Straight_ForwardUSStartMm==500 && Straight_ForwardUSEndMm==380);
+        assert(Straight_BackwardUSStartMm==200 && Straight_BackwardUSEndMm==310);
+    }
+    assert(Straight_StartUntilUltrasonicCm(35)==0);
+    echo(200,0); echo(210,0); /* stationary arrival still belongs to forward */
+    assert(Straight_State()==STRAIGHT_DONE && Straight_ForwardUSEndMm==210);
+    assert(Straight_StartUntilUltrasonicCm(35)==0);
+    echo(500,0); Straight_Stop();
+    assert(Straight_ForwardUSStartMm==500 && Straight_ForwardUSEndMm==UINT32_MAX);
+    assert(Straight_BackwardUSEndMm==310);
+    puts("PASS: UNTILUS start/end gear pairs, implicit FORWARD, reset, isolation and cancellation");
+}
+
 static void test_untilus_bidirectional(void)
 {
     reset(); assert(Straight_StartUntilUltrasonicCm(35)==0);
@@ -112,9 +157,9 @@ static void test_untilus_bidirectional(void)
         echo(initial,0); assert(mock_direction==direction);
         assert(Straight_StartUntilUltrasonicCm(35)==-3);
         encoder_delta=6; echo(initial,0); encoder_delta=0;
-        assert(last_left_pwm==1800 && last_right_pwm==1800);
+        assert(last_left_pwm==US_FINAL_APPROACH_PWM && last_right_pwm==US_FINAL_APPROACH_PWM);
         echo(0,-1); assert(Straight_State()==STRAIGHT_RUNNING && mock_direction==direction);
-        assert(last_left_pwm==1800 && last_right_pwm==1800);
+        assert(last_left_pwm==US_FINAL_APPROACH_PWM && last_right_pwm==US_FINAL_APPROACH_PWM);
         echo(reached,0); assert(Straight_State()==STRAIGHT_RUNNING);
         echo(reached,0); assert(Straight_State()==STRAIGHT_DONE);
         uint32_t mm; int8_t dir;
@@ -132,7 +177,7 @@ static void test_untilus_bidirectional(void)
         /* Missing startup echoes creep rather than report sensor error. */
         reset(); assert(Straight_StartUntilUltrasonicDirectionCm(35,direction)==0);
         echo(0,-1); assert(Straight_State()==STRAIGHT_RUNNING && mock_direction==direction);
-        assert(last_left_pwm==1800 && last_right_pwm==1800);
+        assert(last_left_pwm==US_FINAL_APPROACH_PWM && last_right_pwm==US_FINAL_APPROACH_PWM);
         encoder_delta=6; echo(0,-2); encoder_delta=0;
         for(int i=0;i<8;i++) echo(0,-1);
         assert(Straight_State()==STRAIGHT_RUNNING && mock_direction==direction);
@@ -285,9 +330,9 @@ static void test_ir_low_speed(void)
                     int rc=gated ? Straight_StartCmThenIR(dir*10,side,op,30)
                                  : Straight_StartUntilIRDirectionCm(30,side,op,dir);
                     assert(rc==0);
-                    if (gated) { assert(last_left_pwm>1900); encoder_delta=744; step(); encoder_delta=0; }
-                    assert(last_left_pwm==1900 && last_right_pwm==1900);
-                    for (int i=0; i<5; i++) { step(); assert(last_left_pwm==1900 && last_right_pwm==1900); }
+                    if (gated) { assert(last_left_pwm>IR_COMMAND_DETECT_PWM); encoder_delta=744; step(); encoder_delta=0; }
+                    assert(last_left_pwm==IR_COMMAND_DETECT_PWM && last_right_pwm==IR_COMMAND_DETECT_PWM);
+                    for (int i=0; i<5; i++) { step(); assert(last_left_pwm==IR_COMMAND_DETECT_PWM && last_right_pwm==IR_COMMAND_DETECT_PWM); }
                     assert(Straight_State()==STRAIGHT_RUNNING); Straight_Stop();
                 }
     puts("PASS: all IR gears/sides/operators use low speed at startup and GOCM gate");
@@ -296,6 +341,8 @@ static void test_ir_low_speed(void)
 int main(void)
 {
     test_ir_low_speed();
+    test_untilus_start_takeup();
+    test_untilus_direction_caches();
     test_untilus_bidirectional();
     test_ir_edges();
     test_gocm_ir();

@@ -28,6 +28,7 @@ int main(void)
 {
     for (int side=0; side<2; side++) {
         reset(); assert(Bypass_Start(side,20)==0);
+        assert(Bypass_ForwardDistanceMm==843U);
         Bypass_Step(); assert(calls==1);
         turn=TURN_DONE; Bypass_Step(); turn=TURN_DONE; Bypass_Step();
         for (int i=0;i<3;i++) {

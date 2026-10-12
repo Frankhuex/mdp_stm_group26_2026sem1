@@ -60,6 +60,15 @@ int Straight_IRStatus(int32_t *threshold_cm, uint32_t *cm_x10);
  * UINT32_MAX = no cached stop since Init, FAR, or GT read failure. */
 extern uint32_t Straight_LeftIRStopCmX10;
 extern uint32_t Straight_RightIRStopCmX10;
+/* First fresh valid US sample before drive for each UNTILUS gear, mm.
+ * Selected cache resets on accepted start; UINT32_MAX means unavailable. */
+extern uint32_t Straight_ForwardUSStartMm;
+extern uint32_t Straight_BackwardUSStartMm;
+/* Final condition sample on successful UNTILUS completion, mm.
+ * Default UNTILUS updates FORWARD. Selected start/end pair resets together.
+ * UINT32_MAX = unavailable, aborted or failed; not a post-brake remeasurement. */
+extern uint32_t Straight_ForwardUSEndMm;
+extern uint32_t Straight_BackwardUSEndMm;
 /* Returns 1 for UNTILUS mode. Unavailable clearance = UINT32_MAX (infinity).
  * Nonzero status means invalid/stale; missing echoes do not stop motion. */
 int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,
