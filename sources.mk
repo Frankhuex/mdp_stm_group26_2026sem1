@@ -3,6 +3,7 @@ SOURCES := \
   Core/Src/assessment/command_interface.c \
   Core/Src/control/approach_control.c \
   Core/Src/control/lateral_control.c \
+  Core/Src/control/motion_log.c \
   Core/Src/control/search_lateral_control.c \
   Core/Src/control/bypass_control.c \
   Core/Src/control/motion_heading.c \

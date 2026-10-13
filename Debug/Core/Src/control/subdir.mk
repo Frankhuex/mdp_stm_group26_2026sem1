@@ -7,6 +7,7 @@
 C_SRCS += \
 ../Core/Src/control/approach_control.c \
 ../Core/Src/control/lateral_control.c \
+../Core/Src/control/motion_log.c \
 ../Core/Src/control/search_lateral_control.c \
 ../Core/Src/control/bypass_control.c \
 ../Core/Src/control/motion_heading.c \
@@ -16,6 +17,7 @@ C_SRCS += \
 OBJS += \
 ./Core/Src/control/approach_control.o \
 ./Core/Src/control/lateral_control.o \
+./Core/Src/control/motion_log.o \
 ./Core/Src/control/search_lateral_control.o \
 ./Core/Src/control/bypass_control.o \
 ./Core/Src/control/motion_heading.o \
@@ -25,6 +27,7 @@ OBJS += \
 C_DEPS += \
 ./Core/Src/control/approach_control.d \
 ./Core/Src/control/lateral_control.d \
+./Core/Src/control/motion_log.d \
 ./Core/Src/control/search_lateral_control.d \
 ./Core/Src/control/bypass_control.d \
 ./Core/Src/control/motion_heading.d \

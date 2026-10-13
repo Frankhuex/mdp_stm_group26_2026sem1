@@ -125,3 +125,15 @@ Explicit BACKWARD also caches zero for invalid starting echoes, retaining it aft
 
 直行与转弯独立倍率均默认 150%，参数位于 robot_tuning.h。直行倍率覆盖 GOCM、IR、UNTILUS、手动 MOTOR 及其他通用电机输出；转弯倍率覆盖 TURN 控制器前后方向、起步、巡航与末段，以及 LATERAL/BYPASS/SEARCHLATERAL 内部转弯。每次只缩放一次，制动与舵机不缩放。
 Straight and turn scaling now use separate 150% defaults. Generic/manual outputs use the straight multiplier; all turn-controller outputs use the turn multiplier, including composite arcs. No double scaling; braking and steering remain unscaled.
+
+传感器低速例外：所有启用 IR 比较的段落，以及 UNTILUS 接近/末段、近目标起步与无回波慢速，直接使用配置 PWM，不应用 STRAIGHT_SPEED_SCALE_PERCENT；左右轮同步修正与硬件上限仍保留。GOCM 前段、UNTILUS 远处起步/高速巡航仍使用直行倍率；转弯倍率保持独立。
+Sensor low-speed exception: active IR and UNTILUS approach/final/near-start/no-echo creep bypass straight scaling. Wheel synchronization and hardware clamps remain. GOCM and distant UNTILUS startup/cruise still use the straight multiplier.
+
+未乘直行倍率的传感器低速 PWM 已按之前值的 1.3 倍设置：IR 1900→2470；超声接近 2400→3120；超声末段/无回波 2100→2730；近目标起步 2600→3380。这些配置值直接输出，未增加额外运行时倍率。
+Unscaled sensor PWM values increased by 1.3: IR 2470, US approach 3120, final/no-echo 2730, near startup 3380. No additional runtime multiplier is applied.
+
+CALIBRATE,CENTER 的前进、后退与轮同步修正均使用不缩放输出，基础速度由 command_interface.c 的 CAL_PWM=3000 单独控制，不受直行或转弯倍率影响；硬件 PWM 上限仍有效。
+CALIBRATE,CENTER forward/reverse and wheel synchronization use unscaled outputs. CAL_PWM=3000 controls its base effort independently; hardware saturation remains active.
+
+UNTILUS 正常路径现改用启动一次测距后的 GOCM 定长策略，因而不再使用 US 接近/末段速度与超声提前量；这些参数只作用于 FORWARD 开局无回波退化路径。正常路径所有运动 PWM 使用直行倍率。结束缓存写目标值，未实测停车后距离。
+Normal UNTILUS now uses fixed-distance GOCM and its drive scaling; US approach/final PWM and stop leads only apply to legacy FORWARD no-initial-echo fallback.

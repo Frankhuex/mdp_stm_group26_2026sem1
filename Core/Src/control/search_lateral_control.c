@@ -1,3 +1,4 @@
+#include "control/motion_log.h"
 #include "control/search_lateral_control.h"
 #include "control/bypass_control.h"
 #include "control/lateral_control.h"
@@ -33,6 +34,16 @@ static uint32_t FallbackCount(void)
 void SearchLateral_Init(void) { search_lateral_status_t empty = {0}; sl = empty; fallback_child_is_turn = 0; }
 search_lateral_state_t SearchLateral_State(void) { return sl.state; }
 void SearchLateral_Status(search_lateral_status_t *out) { if (out) *out = sl; }
+/* newlib-nano may omit long-long printf support; retain exact signed sums. */
+static void FormatSearchSum(char *out, int64_t value)
+{
+    char digits[24]; uint32_t n=0, pos=0;
+    uint64_t magnitude=value<0 ? (uint64_t)(-value) : (uint64_t)value;
+    do { digits[n++]=(char)('0'+magnitude%10U);magnitude/=10U; } while(magnitude);
+    if(value<0) out[pos++]='-';
+    while(n) out[pos++]=digits[--n];
+    out[pos]='\0';
+}
 int SearchLateral_Start(uint8_t side, int32_t gate_cm, int32_t threshold_cm)
 {
     if (sl.state == SEARCH_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
@@ -41,14 +52,22 @@ int SearchLateral_Start(uint8_t side, int32_t gate_cm, int32_t threshold_cm)
     if (side > 1U || gate_cm < MIN_COMMAND_DISTANCE_CM || gate_cm > MAX_COMMAND_DISTANCE_CM ||
         threshold_cm < 10 || threshold_cm > (side ? 60 : 50)) return -2;
     int64_t limit = SEARCH_LATERAL_DEFAULT_LIMIT_MM;
-    if (Bypass_ForwardDistanceMm != UINT32_MAX && Straight_AutoUSStartMm != UINT32_MAX &&
-        Straight_ForwardUSEndMm != UINT32_MAX) {
-        int64_t cached = (int64_t)Bypass_ForwardDistanceMm 
-            + Straight_AutoUSStartMm 
-            - Straight_ForwardUSEndMm
-            + 300;
-        if (cached > 0 && cached <= IR_COMMAND_MAX_TRAVEL_CM * 10) limit = cached;
-    }
+    const int32_t offset_mm = 900; /* Search-distance allowance, mm. */
+    int64_t sum = (int64_t)Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + offset_mm;
+    uint8_t caches_valid = Bypass_ForwardDistanceMm != UINT32_MAX && Straight_AutoUSStartMm != UINT32_MAX && Straight_ForwardUSEndMm != UINT32_MAX;
+    uint8_t use_cache = caches_valid && sum > 0 && sum <= UINT32_MAX;
+    if (use_cache) limit = sum;
+    char bypass[16], initial[16], end[16], total[32];
+    if (Bypass_ForwardDistanceMm == UINT32_MAX) strcpy(bypass,"INVALID");
+    else snprintf(bypass,sizeof(bypass),"%lu",(unsigned long)Bypass_ForwardDistanceMm);
+    if (Straight_AutoUSStartMm == UINT32_MAX) strcpy(initial,"INVALID");
+    else snprintf(initial,sizeof(initial),"%lu",(unsigned long)Straight_AutoUSStartMm);
+    if (Straight_ForwardUSEndMm == UINT32_MAX) strcpy(end,"INVALID");
+    else snprintf(end,sizeof(end),"%lu",(unsigned long)Straight_ForwardUSEndMm);
+    if (!caches_valid) strcpy(total,"INVALID");
+    else FormatSearchSum(total,sum);
+    MotionLog_Write("SEARCHLATERAL,LIMIT,dir=%s,bypass_mm=%s,auto_start_mm=%s,forward_end_mm=%s,offset_mm=%ld,sum_mm=%s,limit_mm=%lu,source=%s",
+        side ? "RIGHT" : "LEFT",bypass,initial,end,(long)offset_mm,total,(unsigned long)limit,use_cache ? "CACHE" : "DEFAULT");
     int rc = Straight_StartCmThenIRBounded(gate_cm, side, STRAIGHT_IR_RISING, threshold_cm, (uint32_t)limit);
     if (rc) return rc;
     SearchLateral_Init(); sl.state = SEARCH_RUNNING; sl.side = side;
@@ -92,6 +111,10 @@ void SearchLateral_Step(void)
         straight_state_t state = Straight_State();
         if (state == STRAIGHT_RUNNING) return;
         if (state == STRAIGHT_SEARCH_LIMIT) {
+            float left, right; Straight_Status(0,0,&left,&right,0,0);
+            MotionLog_Write("SEARCHLATERAL,FALLBACK,dir=%s,limit_mm=%lu,left_mm=%lu,right_mm=%lu",
+                sl.side ? "RIGHT" : "LEFT",(unsigned long)sl.limit_mm,
+                (unsigned long)(left*10.0f+0.5f),(unsigned long)(right*10.0f+0.5f));
             sl.fallback = 1; sl.stage = 2; sl.start_rc = StartFallback();
         } else if (state == STRAIGHT_DONE) {
             if (!Straight_IRFirstEdgeReading(&sl.ir_cm_x10)) sl.start_rc = -5;

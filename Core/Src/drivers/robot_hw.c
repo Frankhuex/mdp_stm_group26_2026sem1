@@ -122,6 +122,11 @@ static void Motor_SetSignedScaled(int32_t left_pwm, int32_t right_pwm, uint32_t 
     }
 }
 
+void RobotHW_MotorSetSignedUnscaled(int32_t left_pwm, int32_t right_pwm)
+{
+    Motor_SetSignedScaled(left_pwm, right_pwm, 100U);
+}
+
 void RobotHW_MotorSetSigned(int32_t left_pwm, int32_t right_pwm)
 {
     Motor_SetSignedScaled(left_pwm, right_pwm, STRAIGHT_SPEED_SCALE_PERCENT);

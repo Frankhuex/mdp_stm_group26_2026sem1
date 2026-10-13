@@ -20,7 +20,7 @@ int Turn_StartRadiusAngle(int32_t r,int32_t a,int8_t d)
 static void setup(uint32_t limit)
 {
     reset(); Lateral_Init(); SearchLateral_Init(); turn_state=TURN_IDLE; turn_calls=fail_turn=0;
-    Bypass_ForwardDistanceMm=limit; Straight_AutoUSStartMm=400; Straight_ForwardUSEndMm=700;
+    Bypass_ForwardDistanceMm=limit; Straight_AutoUSStartMm=400; Straight_ForwardUSEndMm=1000;
     ir.left_status=ir.right_status=IR_RANGE_VALID;
 }
 static void poll(void) { step(); Lateral_Step(); SearchLateral_Step(); }
@@ -87,8 +87,8 @@ int main(void)
         assert(status().stage==stage);SearchLateral_Stop();int before=turn_calls;
         turn_state=TURN_DONE;Lateral_Step();SearchLateral_Step();assert(SearchLateral_State()==SEARCH_ABORTED&&turn_calls==before);
     }
-    for(int missing=0;missing<5;missing++) {
-        setup(missing==4 ? 2100 : 1000);
+    for(int missing=0;missing<4;missing++) {
+        setup(1000);
         if(missing==0) Bypass_ForwardDistanceMm=UINT32_MAX;
         if(missing==1) Straight_AutoUSStartMm=UINT32_MAX;
         if(missing==2) Straight_ForwardUSEndMm=UINT32_MAX;
@@ -100,6 +100,10 @@ int main(void)
         assert(status().stage==2 && status().fallback && status().limit_mm==1000);
         SearchLateral_Stop();
     }
+    setup(2300);assert(SearchLateral_Start(1,50,50)==0 && status().limit_mm==2300);
+    encoder_delta=15000;poll();encoder_delta=0;
+    assert(SearchLateral_State()==SEARCH_RUNNING && status().stage==0);
+    SearchLateral_Stop();
     setup(600);assert(SearchLateral_Start(1,50,50)==0);encoder_delta=4460;poll();encoder_delta=0;
     fail_turn=1;reading(510);reading(520);assert(SearchLateral_State()==SEARCH_START_ERROR);
     puts("PASS: SEARCHLATERAL both paths/sides, cache validation/freeze, full-distance bound, edge race, mirrors, STOP every stage and errors");

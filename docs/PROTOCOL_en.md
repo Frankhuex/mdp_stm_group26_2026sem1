@@ -428,7 +428,7 @@ IR status and completion append `ir_raw,ir_status,ir_age_ms,confirm,armed` for t
 
 `SEARCHLATERAL,LEFT/RIGHT,x,n` drives forward x cm (10..200), then continuously detects the selected IR RISING n (LEFT 10..50, RIGHT 10..60). Successful edge completion performs lateral using the minimum finite IR +10 cm. Invalid/oversized lateral displacement and acquisition faults terminate the command rather than selecting fallback.
 
-At acceptance, freeze the mm limit `Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + 300` using signed arithmetic. Missing caches, nonpositive results or limits above 2000 mm select the default total search distance of 100 cm (1000 mm), without rejecting startup. A valid cached combination takes precedence. Total search travel includes the initial x cm. Every poll checks either encoder before edge completion; reaching the bound brakes and selects fallback, including before the IR gate. Distance wins if both conditions occur in one poll. The trigger bound does not guarantee zero braking overrun.
+At acceptance, freeze the mm limit `Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + 300` using signed arithmetic. Missing caches, nonpositive results or limits not representable as uint32_t mm select the default total search distance of 100 cm (1000 mm), without rejecting startup. A valid cached combination takes precedence. Total search travel includes the initial x cm. Every poll checks either encoder before edge completion; reaching the bound brakes and selects fallback, including before the IR gate. Distance wins if both conditions occur in one poll. The trigger bound does not guarantee zero braking overrun.
 
 RIGHT fallback: `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` → `STRAIGHT,GOCM,-20` → `STRAIGHT,RIGHTIR,LT,50` → `TURN,LEFT,R=20,A=90`. LEFT mirrors sensor/steering sides, retaining left radius 20 and right radius 35. Fallback GT uses strict acquisition-error handling; both fallback IR thresholds are fixed at 50.
 
@@ -441,3 +441,21 @@ Fallback routes are actual executable string arrays in Core/Src/control/search_l
 STRAIGHT,AUTO,UNTILUS,n waits for two valid starting echoes on the same target side, differing by at most 50 mm. Above target selects forward, below selects backward, equality completes stationary. Gear remains fixed after selection. Existing slowdown, braking leads, brake hold and bounds apply. An invalid/missing starting echo selects backward creep and caches AUTO start clearance as zero. Recovered echoes retain reverse direction and resume stop confirmation; later missing echoes permit creep in the selected gear. The implicit UNTILUS command still defaults forward.
 
 Straight_AutoUSStartMm / Straight_AutoUSEndMm are independent mm caches, reset on AUTO acceptance. They hold the first valid initial echo (zero for invalid starting echo) and successful final condition sample; unavailable/failed values use UINT32_MAX. AUTO does not update fixed-gear caches. OK reports dir=AUTO; successful DONE reports the actual gear or NONE. SEARCHLATERAL now uses the AUTO start cache, retaining the source +300 mm allowance and 100 cm default. FAST LEFT1/RIGHT1 use AUTO with their existing 32/34 cm targets.
+
+Drive-scale exception: active IR comparisons and UNTILUS approach/final/near-start/no-echo creep use configured PWM without the straight multiplier. Distant UNTILUS startup/cruise and GOCM remain scaled; turn scaling is unchanged. Wheel synchronization and PWM saturation remain active.
+
+### Current UNTILUS policy: initial measurement then fixed travel
+
+This supersedes continuous ultrasonic control on the normal path. Cache one fresh initial sample, subtract the requested distance and drive the difference using GOCM preparation, steering PID, wheel synchronization, profiles, drive scaling, distance compensation and 150 ms braking. AUTO chooses gear; explicit/default FORWARD and BACKWARD remain fixed. Already-reached/equal conditions complete stationary. No ultrasonic reads occur during normal fixed travel. Millimetre differences are retained; sub-minimum corrections are supported, falling back to the raw difference if normal short-distance compensation would be nonpositive. UNTILUS has no accumulated travel cap; the 30-second timeout remains.
+
+Invalid initial AUTO/BACKWARD echoes cache zero and execute target-distance reverse travel. Invalid initial FORWARD/default echoes retain the entire legacy continuous-measurement/forward-creep strategy. On success, end caches directly store target mm without a final measurement; faults/STOP leave end unavailable. Cache ownership is unchanged. DONE includes us_source=TARGET/MEASURED: fixed-travel completion reports calculated target us_mm, while legacy fallback reports its measured stopping sample; both successful end caches store the target.
+
+SEARCHLATERAL removes the 200 cm computed-limit cap. Bounded searches use limit_mm rather than the ordinary IR 200 cm travel limit. Missing/invalid caches retain the 100 cm default; 30-second timeout, STOP and fault handling remain. Ordinary IR commands retain their travel limit.
+
+### Motion cache and search logs
+
+All diagnostic lines start with LOG and remain visible during FAST reply suppression; sequence RAM logging also records them. CACHE,BYPASS reports planned forward mm. CACHE,UNTILUS reports START/END, FORWARD/BACKWARD/AUTO and mm; END uses source=TARGET. Initialization/reset sentinels are not logged.
+
+SEARCHLATERAL,LIMIT prints bypass_mm, auto_start_mm, forward_end_mm, offset_mm, sum_mm, selected limit_mm and source=CACHE/DEFAULT. Missing values display INVALID. SEARCHLATERAL,FALLBACK prints limit_mm and both accumulated wheel distances after braking, before the first fallback step. Controllers enqueue logs; UART draining occurs in command polling, including FAST. Queue overflow reports LOG,DROPPED. All distances use mm.
+
+UNTILUS removes both computed-distance and accumulated-travel caps, including legacy fallback. Ordinary GOCM argument limits, UNTILUS target limits and the 30-second timeout remain.

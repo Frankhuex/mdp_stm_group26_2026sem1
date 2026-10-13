@@ -47,7 +47,7 @@
 /* Profile selection: 10..20 cm = SHORT, 21..200 cm = LONG. */
 #define SHORT_PROFILE_MAX_CM            20
 #define MIN_COMMAND_DISTANCE_CM         10
-#define MAX_COMMAND_DISTANCE_CM         200
+#define MAX_COMMAND_DISTANCE_CM         210
 /* Floor observation: GOCM stops about 2 cm short with the current brake.
  * Add travel before braking, in both gears and both distance profiles. */
 #define GOCM_BRAKE_DELAY_CM              2.0f
@@ -135,9 +135,9 @@
  * Threshold is sensor-to-object clearance, NOT commanded travel distance. */
 #define US_MIN_THRESHOLD_CM              5
 #define US_MAX_THRESHOLD_CM              200
-#define US_CRUISE_PWM                    3500U
-#define US_APPROACH_PWM                  2400U
-#define US_FINAL_APPROACH_PWM            2100U
+#define US_CRUISE_PWM                    3000U
+#define US_APPROACH_PWM                  2750U
+#define US_FINAL_APPROACH_PWM            2600U
 #define US_FINAL_APPROACH_MARGIN_MM       200U
 /* Keep braking until both encoders stay quiet, with a bounded release time. */
 #define US_BRAKE_QUIET_MS                  60U
@@ -145,7 +145,7 @@
 /* Floor observation: both directions travel about 5 cm after the trigger. */
 #define US_FORWARD_STOP_LEAD_MM           50U
 #define US_REVERSE_STOP_LEAD_MM           50U
-#define US_NEAR_START_PWM                2600U
+#define US_NEAR_START_PWM                3380U
 #define US_KICKSTART_PWM                 4000U
 #define US_KICKSTART_MIN_MS                120U
 #define US_KICKSTART_MAX_MS               400U
@@ -166,13 +166,12 @@
 /* Older readings become infinity; this is not a motion timeout. */
 #define US_SAMPLE_MAX_AGE_MS             200U
 #define US_MOTION_TIMEOUT_MS             30000U
-#define US_MAX_TRAVEL_CM                 200U
 
 /* Side IR commands: stop on strictly greater distance (FAR/failure = infinity). */
 #define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
 /* All active IR comparisons use low speed, including startup and gated entry. */
-#define IR_COMMAND_DETECT_PWM            1900U
+#define IR_COMMAND_DETECT_PWM            2730U
 #define IR_COMMAND_TIMEOUT_MS           30000U
 #define IR_COMMAND_MAX_TRAVEL_CM         200U
 

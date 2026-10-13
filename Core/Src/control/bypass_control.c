@@ -1,3 +1,4 @@
+#include "control/motion_log.h"
 #include "control/bypass_control.h"
 #include "control/straight_control.h"
 #include "control/lateral_control.h"
@@ -23,9 +24,11 @@ int Bypass_Start(uint8_t side, int32_t distance_cm)
     if (angle < CMD_MIN_ANGLE_DEG || angle > 90 || 2 * angle > CMD_MAX_ANGLE_DEG) return -2;
     bc.side = side; bc.stage = 1U; bc.distance_cm = distance_cm; bc.angle_deg = angle;
     bc.start_rc = StartArc(); bc.turn_state = Turn_State();
-    if (!bc.start_rc)
+    if (!bc.start_rc) {
         Bypass_ForwardDistanceMm = (uint32_t)lroundf(2.0f * radius_sum * 10.0f *
             sinf(angle * (3.14159265358979323846f / 180.0f)));
+        MotionLog_Write("CACHE,BYPASS,dir=%s,forward_mm=%lu",side ? "RIGHT" : "LEFT",(unsigned long)Bypass_ForwardDistanceMm);
+    }
     bc.state = bc.start_rc ? BYPASS_START_ERROR : BYPASS_RUNNING;
     return bc.start_rc;
 }

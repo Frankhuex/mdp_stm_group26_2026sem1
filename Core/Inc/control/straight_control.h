@@ -85,6 +85,8 @@ int Straight_UltrasonicStatus(int32_t *threshold_cm, uint32_t *distance_mm,
 /* Successful UNTILUS condition sample, captured before braking. Historical
  * age at detection; direction +1=forward, -1=reverse, 0=stationary equality.
  * Returns 0 if no successful UNTILUS result is available. */
+/* Completion sample is the planned target in distance mode; legacy fallback remains measured. */
+uint8_t Straight_UltrasonicDistanceMode(void);
 uint8_t Straight_UltrasonicStopReading(uint32_t *distance_mm, uint32_t *age_ms,
                                        int8_t *direction);
 void Straight_Step(void);

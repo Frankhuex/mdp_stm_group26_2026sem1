@@ -3,7 +3,7 @@
 
 /* Independent drive multipliers, 1..200 percent. Braking/servo are unscaled. */
 #ifndef STRAIGHT_SPEED_SCALE_PERCENT
-#define STRAIGHT_SPEED_SCALE_PERCENT    170U
+#define STRAIGHT_SPEED_SCALE_PERCENT    155U
 #endif
 #ifndef TURN_SPEED_SCALE_PERCENT
 #define TURN_SPEED_SCALE_PERCENT        125U

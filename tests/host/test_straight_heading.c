@@ -34,6 +34,8 @@ int32_t RobotHW_MotorGetRightSigned(void) { return 0; }
 int32_t RobotHW_MotorGetLeftRequested(void) { return 0; }
 int32_t RobotHW_MotorGetRightRequested(void) { return 0; }
 void RobotHW_MotorSetSigned(int32_t l, int32_t r) { (void)l; (void)r; }
+void MotionLog_Write(const char *format, ...) { (void)format; }
+void RobotHW_MotorSetSignedUnscaled(int32_t l,int32_t r) { RobotHW_MotorSetSigned(l,r); }
 uint8_t RobotHW_GyroIsInitialized(void) { return 1U; }
 uint8_t RobotHW_GyroInit(void) { return 1U; }
 uint8_t RobotHW_GyroCalibrate(uint32_t a,uint32_t b,uint32_t c)

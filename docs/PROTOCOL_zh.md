@@ -388,7 +388,7 @@ IR 状态与完成事件追加所选侧的 `ir_raw,ir_status,ir_age_ms,confirm,a
 
 `SEARCHLATERAL,LEFT/RIGHT,x,n`：先前进 x cm（10～200），不停地开始对应侧 RISING n 检测（左 10～50、右 10～60）。正常完成越沿后，用最小有效 IR +10 cm 执行对应侧 LATERAL。缓存侧移距离超限或读数错误报失败，不触发备用路线。
 
-启动时冻结毫米上限 `Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + 300`，使用有符号计算；任一缓存缺失，或计算结果非正、超过 2000 mm 时，使用默认总搜索距离 100 cm（1000 mm），继续启动；有效缓存组合仍优先使用。总行程包含前段 x cm；每次轮询检查任一轮编码器，达到上限先制动，再走备用路线，同一轮与 RISING 同时满足时上限优先。上限小于前段 x 时也会在前段触发。触发点不等同于制动后的精确停车距离。
+启动时冻结毫米上限 `Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + 300`，使用有符号计算；任一缓存缺失，或计算结果非正、无法用 uint32_t 毫米表示时，使用默认总搜索距离 100 cm（1000 mm），继续启动；有效缓存组合仍优先使用。总行程包含前段 x cm；每次轮询检查任一轮编码器，达到上限先制动，再走备用路线，同一轮与 RISING 同时满足时上限优先。上限小于前段 x 时也会在前段触发。触发点不等同于制动后的精确停车距离。
 
 RIGHT 的备用顺序为 `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` → `STRAIGHT,GOCM,-20` → `STRAIGHT,RIGHTIR,LT,50` → `TURN,LEFT,R=20,A=90`。LEFT 交换探头和转向，左半径始终 20，右半径始终 35。备用 GT 阶段使用严格读取故障策略；备用路线的 GT/LT 阈值固定为 50。
 
@@ -401,3 +401,21 @@ RIGHT 的备用顺序为 `STRAIGHT,RIGHTIR,GT,50` → `TURN,RIGHT,R=35,A=90` →
 `STRAIGHT,AUTO,UNTILUS,n` 等待连续两次有效起始超声读数，要求距离差不超过 50 mm，且同处目标的一侧：大于 n 前进，小于 n 后退，相等确认后原地完成。选择后方向锁定，沿用既有减速、停车提前量、制动及行程/超时限制。选向前收到无效/无回波样本时默认选择后退，按现有无回波策略慢速倒退，AUTO 开始值缓存为 0；恢复回波后保持后退方向，继续确认停车。选向后无回波沿已选方向慢速行驶。默认 `STRAIGHT,UNTILUS,n` 仍为前进，显式 FORWARD/BACKWARD 行为保留。
 
 AUTO 首尾毫米缓存分别为 `Straight_AutoUSStartMm`、`Straight_AutoUSEndMm`，每次 AUTO 接受时清空，仅更新 AUTO 一对，不覆盖固定方向缓存；开始值为首个有效起始样本，开局无效回波采用 0；结束值为成功停车的条件样本，未取得或失败为 UINT32_MAX。接受回复 dir=AUTO，成功 DONE 的 dir 为实际 FORWARD/BACKWARD 或原地 NONE。SEARCHLATERAL 上限改用 AUTO 开始值，并保留源码的 +300 mm 补偿；无有效组合仍用默认 100 cm。FAST LEFT1/RIGHT1 末尾改用 AUTO，目标分别保留 32/34 cm。
+
+速度倍率例外：IR 正在比较条件时，以及 UNTILUS 接近、末段、近目标起步和无回波慢速段，其 PWM 不乘直行倍率。UNTILUS 高速巡航、远处起步和 GOCM 保留直行倍率；转弯倍率不变。左右轮同步修正和 PWM 上限仍生效。
+
+### 当前 UNTILUS 策略：起始测距后定长行驶
+
+本节替代前文正常路径的持续检测策略。UNTILUS 启动仅采集一个新鲜超声样本并缓存，按与目标的差计算需移动距离：AUTO 自动选向，FORWARD/默认仅前进，BACKWARD 仅后退；固定方向的条件已满足或距离相等时原地成功完成。有效读数随后不再参与运动控制，行驶使用 GOCM 的准备、舵机 PID、左右轮同步、长短速度曲线、倍率、距离补偿及 150 ms 制动。毫米差值保留计算精度；小于常规 GOCM 最小距离的修正也允许，若常规短距补偿产生非正距离则使用原始差值。UNTILUS 不再设置累计行程上限，保留 30 秒超时。
+
+AUTO/BACKWARD 开局无效回波时缓存 0，按目标厘米数执行定长后退。FORWARD/省略方向开局无效回波时整条命令退化为旧版持续超声检测、慢速前进与原停车策略。成功结束缓存一律直接写目标毫米值，不进行停车后测量；故障/STOP 保持结束缓存不可用。默认/显式方向与 AUTO 缓存各自独立。DONE 增加 us_source=TARGET/MEASURED：正常定长完成的 us_mm 为计算目标；旧版退化路径仍回报条件触发测量，结束缓存仍为目标。
+
+SEARCHLATERAL 缓存计算上限不再限制为 200 cm；底层搜索阶段以计算出的 limit_mm 为总行程上限，不再额外套用普通 IR 的 200 cm 限制。缓存缺失或计算无效仍用默认 100 cm；30 秒超时、STOP、传感器/陀螺仪故障策略保留。普通 IR 指令的行程限制不变。
+
+### 运动缓存与搜索诊断日志
+
+日志均以 LOG 开头，FAST 屏蔽普通子命令回复时仍会输出，也写入现有序列 RAM 日志。`LOG,CACHE,BYPASS,dir=...,forward_mm=...` 记录计划纵向缓存；`LOG,CACHE,UNTILUS,kind=START/END,mode=FORWARD/BACKWARD/AUTO,mm=...` 记录实际缓存更新，END 带 source=TARGET。缓存重置与初始化不打印。
+
+`LOG,SEARCHLATERAL,LIMIT,dir=...,bypass_mm=...,auto_start_mm=...,forward_end_mm=...,offset_mm=...,sum_mm=...,limit_mm=...,source=CACHE/DEFAULT` 打印启动时冻结的各项与总和；缺失值显示 INVALID，采用默认值时 source=DEFAULT。`LOG,SEARCHLATERAL,FALLBACK,dir=...,limit_mm=...,left_mm=...,right_mm=...` 在制动结束、启动备用动作前打印，两轮行程包含制动过程。日志通过前台队列由 UART 发送，不在缓存函数中直接等待 UART；队列满时会报 LOG,DROPPED。单位均为毫米。
+
+UNTILUS 的定长计算与旧版持续检测退化路径均取消累计行程上限；普通 GOCM 的参数范围、UNTILUS 目标 n 的范围和 30 秒超时保持。

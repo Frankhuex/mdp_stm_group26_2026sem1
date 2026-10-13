@@ -6,6 +6,7 @@
 #include "control/lateral_control.h"
 #include "control/bypass_control.h"
 #include "control/search_lateral_control.h"
+#include "control/motion_log.h"
 #include "sensors/ir_sensor.h"
 #include "control/motion_heading.h"
 #include "drivers/robot_hw.h"
@@ -108,7 +109,7 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_approach_commands[] =
 {
-    "STRAIGHT,UNTILUS,30",
+    "STRAIGHT,UNTILUS,32",
 };
 static const char *const fast_left1_commands[] =
 {
@@ -121,7 +122,8 @@ static const char *const fast_left1_commands[] =
     // "TURN,LEFT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
 
-    "BYPASS,LEFT,25",
+    "BYPASS,LEFT,27",
+    "STRAIGHT,AUTO,UNTILUS,32",
     "STRAIGHT,AUTO,UNTILUS,32",
 };
 static const char *const fast_left2_commands[] =
@@ -146,8 +148,9 @@ static const char *const fast_right1_commands[] =
     // "TURN,RIGHT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
 
-    "BYPASS,RIGHT,25",
-    "STRAIGHT,AUTO,UNTILUS,34",
+    "BYPASS,RIGHT,27",
+    "STRAIGHT,AUTO,UNTILUS,32",
+    "STRAIGHT,AUTO,UNTILUS,32",
 };
 static const char *const fast_right2_commands[] =
 {
@@ -203,6 +206,17 @@ static void Cmd_SendRaw(const uint8_t *data, uint16_t length)
         }
         if (sequence_log_capture_only || command_output_suppressed) return;
         (void)HAL_UART_Transmit(&huart3, (uint8_t *)data, length, HAL_MAX_DELAY);
+    }
+}
+
+static void FlushMotionLogs(void)
+{
+    char line[256];
+    while (MotionLog_Read(line,sizeof(line))) {
+        uint8_t suppressed = command_output_suppressed;
+        command_output_suppressed = 0U;
+        Cmd_SendRaw((const uint8_t *)line,(uint16_t)strlen(line));
+        command_output_suppressed = suppressed;
     }
 }
 
@@ -533,12 +547,12 @@ static void NotifyPendingMotionDone(void)
         if (captured) valid = 0;
         FormatUltrasonicMm(mm_text, sizeof(mm_text), mm);
         snprintf(msg, sizeof(msg),
-                 "DONE,STRAIGHT,mode=UNTILUS,state=%s,reason=%s,threshold_cm=%ld,us_mm=%s,us_status=%d,dir=%s,us_age_ms=%lu\r\n",
+                 "DONE,STRAIGHT,mode=UNTILUS,state=%s,reason=%s,threshold_cm=%ld,us_mm=%s,us_status=%d,dir=%s,us_age_ms=%lu,us_source=%s\r\n",
                  StraightStateText(state),
-                 state == STRAIGHT_DONE ? "US_THRESHOLD" : StraightStateText(state),
+                 state == STRAIGHT_DONE ? (Straight_UltrasonicDistanceMode() ? "DISTANCE_TARGET" : "US_THRESHOLD") : StraightStateText(state),
                  (long)threshold, mm_text, valid,
                  captured ? (direction > 0 ? "FORWARD" : direction < 0 ? "BACKWARD" : "NONE") : "UNKNOWN",
-                 (unsigned long)age);
+                 (unsigned long)age, Straight_UltrasonicDistanceMode() ? "TARGET" : "MEASURED");
         Cmd_Send(msg);
         ClearPendingMotion();
     }
@@ -953,8 +967,9 @@ static float Cal_Drive(uint32_t pulse, int8_t dir)
     uint32_t t0 = HAL_GetTick();
     uint32_t prev_t = t0;
 
-    if (dir > 0) RobotHW_MotorSetForward(CAL_PWM, CAL_PWM);
-    else         RobotHW_MotorSetBackward(CAL_PWM, CAL_PWM);
+    /* Calibration speed is independent of straight/turn drive multipliers. */
+    int32_t initial_pwm = dir > 0 ? (int32_t)CAL_PWM : -(int32_t)CAL_PWM;
+    RobotHW_MotorSetSignedUnscaled(initial_pwm, initial_pwm);
 
     while (dist < CAL_RUN_CM && (HAL_GetTick() - t0) < CAL_MAX_MS)
     {
@@ -979,8 +994,7 @@ static float Cal_Drive(uint32_t pulse, int8_t dir)
             int32_t rp = (int32_t)CAL_PWM + corr;
             if (lp < 0) lp = 0;
             if (rp < 0) rp = 0;
-            if (dir > 0) RobotHW_MotorSetForward((uint32_t)lp, (uint32_t)rp);
-            else         RobotHW_MotorSetBackward((uint32_t)lp, (uint32_t)rp);
+            RobotHW_MotorSetSignedUnscaled(dir > 0 ? lp : -lp, dir > 0 ? rp : -rp);
 
             prev_t = now;
         }
@@ -2044,6 +2058,7 @@ static void ProcessRxByte(uint8_t b)
 
 static void CommandInterface_Init(void)
 {
+    MotionLog_Init();
     RobotHW_StartMotionPeripherals();
     Straight_Init();
     Turn_Init();
@@ -2084,6 +2099,7 @@ static void CommandInterface_Poll(void)
     Lateral_Step();
     Bypass_Step();
     SearchLateral_Step();
+    FlushMotionLogs();
     GyroPollingStep();
     NotifyPendingMotionDone();
     while (RxRingPop(&rx_byte)) ProcessRxByte(rx_byte);   /* drain the ISR ring */
@@ -2243,6 +2259,7 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
         }
     }
     Sequence_StopMotors();
+    FlushMotionLogs();
     if (emit_sequence_status)
     {
         if (failure)
