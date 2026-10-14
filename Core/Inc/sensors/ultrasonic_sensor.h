@@ -13,6 +13,9 @@
  */
 int UltrasonicSensor_Init(void);
 int UltrasonicSensor_Read(uint32_t *pulse_us, uint32_t *distance_mm);
+/* Last explicit US,GET result, mm; UINT32_MAX means unmeasured/invalid.
+ * Separate from UNTILUS caches; other sensor reads do not update it. */
+extern uint32_t Ultrasonic_LastGetMm;
 
 typedef struct
 {

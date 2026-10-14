@@ -5,6 +5,8 @@
 
 /* ADC1 is configured in main.c / CubeMX. */
 extern ADC_HandleTypeDef hadc1;
+uint32_t IRSensor_LeftLastGetCmX10 = UINT32_MAX;
+uint32_t IRSensor_RightLastGetCmX10 = UINT32_MAX;
 
 
 /* ============================================================

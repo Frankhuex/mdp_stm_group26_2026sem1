@@ -459,3 +459,7 @@ All diagnostic lines start with LOG and remain visible during FAST reply suppres
 SEARCHLATERAL,LIMIT prints bypass_mm, auto_start_mm, forward_end_mm, offset_mm, sum_mm, selected limit_mm and source=CACHE/DEFAULT. Missing values display INVALID. SEARCHLATERAL,FALLBACK prints limit_mm and both accumulated wheel distances after braking, before the first fallback step. Controllers enqueue logs; UART draining occurs in command polling, including FAST. Queue overflow reports LOG,DROPPED. All distances use mm.
 
 UNTILUS removes both computed-distance and accumulated-travel caps, including legacy fallback. Ordinary GOCM argument limits, UNTILUS target limits and the 30-second timeout remain.
+
+US,GET caches its valid reading in Ultrasonic_LastGetMm (mm, declared in ultrasonic_sensor.h). Unmeasured/invalid/init-failed results use UINT32_MAX; BUSY preserves the previous cache. This is independent of UNTILUS caches and other ultrasonic reads. Updates emit LOG,CACHE,US_GET. LATERAL,RIGHT,20;US,GET;LATERAL,LEFT,20 provides a stopped measurement between two numeric lateral moves, without IR compensation. BYPASS retains its three-turn behavior.
+
+LEFTIR,GET / RIGHTIR,GET independently cache valid distance in IRSensor_LeftLastGetCmX10 / IRSensor_RightLastGetCmX10 (0.1 cm, equivalent to mm). Unmeasured/NEAR/FAR/error values use UINT32_MAX. Only the requested side updates; BUSY preserves both. Other IR reads and motion caches remain independent. Updates emit LOG,CACHE,IR_GET.

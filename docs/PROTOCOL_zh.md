@@ -419,3 +419,7 @@ SEARCHLATERAL 缓存计算上限不再限制为 200 cm；底层搜索阶段以�
 `LOG,SEARCHLATERAL,LIMIT,dir=...,bypass_mm=...,auto_start_mm=...,forward_end_mm=...,offset_mm=...,sum_mm=...,limit_mm=...,source=CACHE/DEFAULT` 打印启动时冻结的各项与总和；缺失值显示 INVALID，采用默认值时 source=DEFAULT。`LOG,SEARCHLATERAL,FALLBACK,dir=...,limit_mm=...,left_mm=...,right_mm=...` 在制动结束、启动备用动作前打印，两轮行程包含制动过程。日志通过前台队列由 UART 发送，不在缓存函数中直接等待 UART；队列满时会报 LOG,DROPPED。单位均为毫米。
 
 UNTILUS 的定长计算与旧版持续检测退化路径均取消累计行程上限；普通 GOCM 的参数范围、UNTILUS 目标 n 的范围和 30 秒超时保持。
+
+US,GET 会将本次有效毫米测距保存到独立变量 `Ultrasonic_LastGetMm`（ultrasonic_sensor.h）；未测量、初始化失败、无有效回波为 UINT32_MAX，BUSY 拒绝不修改缓存。不会覆盖 UNTILUS 的首尾缓存；其他超声读取也不更新此变量。更新时发送 LOG,CACHE,US_GET。可用 `LATERAL,RIGHT,20;US,GET;LATERAL,LEFT,20` 在侧移后停车测量，再侧移返回；两次 LATERAL 各自按完整侧移距离计算，不增加 IR 补偿。BYPASS 保留原三段转弯。
+
+LEFTIR,GET / RIGHTIR,GET 分别将有效距离缓存到 IRSensor_LeftLastGetCmX10 / IRSensor_RightLastGetCmX10，单位为 0.1 cm（与毫米等价），300 表示 30 cm。未查询、NEAR/FAR 或读取错误为 UINT32_MAX；只更新所选侧，另一侧保留，BUSY 不修改。缓存独立于 IR 停车与 RISING 最小值，其他读取不覆盖。更新时发送 LOG,CACHE,IR_GET。

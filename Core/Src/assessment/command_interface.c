@@ -122,7 +122,9 @@ static const char *const fast_left1_commands[] =
     // "TURN,LEFT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
 
-    "BYPASS,LEFT,27",
+    "LATERAL,LEFT,27",
+    "US,GET",
+    "LATERAL,RIGHT,27",
     "STRAIGHT,AUTO,UNTILUS,32",
     "STRAIGHT,AUTO,UNTILUS,32",
 };
@@ -148,7 +150,9 @@ static const char *const fast_right1_commands[] =
     // "TURN,RIGHT,R=35,A=60",
     // "STRAIGHT,GOCM,-33",
 
-    "BYPASS,RIGHT,27",
+    "LATERAL,RIGHT,27",
+    "US,GET",
+    "LATERAL,LEFT,27",
     "STRAIGHT,AUTO,UNTILUS,32",
     "STRAIGHT,AUTO,UNTILUS,32",
 };
@@ -1090,6 +1094,8 @@ static void HandleCalibrateCenter(void)
 static void HandleIRGet(uint8_t side)
 {
     if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+    uint32_t *cache = side ? &IRSensor_RightLastGetCmX10 : &IRSensor_LeftLastGetCmX10;
+    *cache = UINT32_MAX;
     IRSensorDistanceReading reading;
     int rc = IRSensor_ReadDistance(&reading, 1U);
     char msg[128], cm[24];
@@ -1097,10 +1103,15 @@ static void HandleIRGet(uint8_t side)
     if (rc != 0)
     {
         snprintf(msg,sizeof(msg),"%s,cm=INVALID,raw=NA,mv=NA,status=ERROR,rc=%d\r\n",name,rc);
+        MotionLog_Write("CACHE,IR_GET,side=%s,cm_x10=INVALID,status=ERROR,rc=%d",name,rc);
         Cmd_Send(msg); return;
     }
     IRSensorRangeStatus range = side ? reading.right_status : reading.left_status;
     uint32_t distance = side ? reading.right_cm_x10 : reading.left_cm_x10;
+    if (range == IR_RANGE_VALID) {
+        *cache = distance;
+        MotionLog_Write("CACHE,IR_GET,side=%s,cm_x10=%lu,status=VALID,rc=0",name,(unsigned long)distance);
+    } else MotionLog_Write("CACHE,IR_GET,side=%s,cm_x10=INVALID,status=%s,rc=0",name,IRSensor_RangeText(range));
     if (range == IR_RANGE_VALID)
         snprintf(cm,sizeof(cm),"%lu.%lu",(unsigned long)(distance/10U),(unsigned long)(distance%10U));
     else snprintf(cm,sizeof(cm),"%s",range == IR_RANGE_NEAR ? "NEAR" : range == IR_RANGE_FAR ? "FAR" : "INVALID");
@@ -1191,8 +1202,16 @@ static void DispatchLine(char *line)
         uint32_t pulse_us = 0U, dist_mm = 0U;
         int rc;
         if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
-        if (UltrasonicSensor_Init() != 0) { Cmd_Reject("ERR,NO_DEVICE"); return; }
+        Ultrasonic_LastGetMm = UINT32_MAX;
+        if (UltrasonicSensor_Init() != 0) {
+            MotionLog_Write("CACHE,US_GET,mm=INVALID,status=-1");
+            Cmd_Reject("ERR,NO_DEVICE"); return;
+        }
         rc = UltrasonicSensor_Read(&pulse_us, &dist_mm);
+        if (rc == 0 && dist_mm > 0U) {
+            Ultrasonic_LastGetMm = dist_mm;
+            MotionLog_Write("CACHE,US_GET,mm=%lu,status=0",(unsigned long)dist_mm);
+        } else MotionLog_Write("CACHE,US_GET,mm=INVALID,status=%d",rc);
         char msg[48];
         snprintf(msg, sizeof(msg), "US,mm=%lu,status=%d\r\n",
                  (unsigned long)((rc == 0) ? dist_mm : 0U), rc);

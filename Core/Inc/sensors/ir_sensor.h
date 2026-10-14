@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+/* Explicit LEFTIR/RIGHTIR,GET caches, 0.1 cm (=mm).
+ * Only the selected side updates; UINT32_MAX = unmeasured/NEAR/FAR/error. */
+extern uint32_t IRSensor_LeftLastGetCmX10;
+extern uint32_t IRSensor_RightLastGetCmX10;
+
 /*
  * 2x Sharp GP2Y0A21YK used by this project
  *

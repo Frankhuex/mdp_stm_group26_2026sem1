@@ -5,6 +5,7 @@
 #include "test_config.h"
 #include "sensors/ultrasonic_sensor.h"
 
+uint32_t Ultrasonic_LastGetMm = UINT32_MAX;
 extern TIM_HandleTypeDef htim8;
 #define TRIG_GPIO_PORT GPIOB
 #define TRIG_GPIO_PIN GPIO_PIN_15
