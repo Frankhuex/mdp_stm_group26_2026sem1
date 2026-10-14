@@ -44,6 +44,23 @@ int main(void)
                 turn_state=TURN_DONE; Lateral_Step(); assert(turn_calls==2);
                 turn_state=TURN_DONE; Lateral_Step(); assert(Lateral_State()==LATERAL_DONE);
             }
+    for(int dir=-1;dir<=1;dir+=2) for(uint8_t side=0;side<2;side++)
+        for(int op=STRAIGHT_IR_RISING;op<=STRAIGHT_IR_FALLING;op++) {
+            setup();ir.left_cm_x10=ir.right_cm_x10=op==STRAIGHT_IR_RISING?300:430;
+            assert(Lateral_StartOnIREdge(side,op,40,dir)==0);
+            assert(ir_reads==1 && drives>0 && mock_direction==dir);
+            uint8_t active;assert(!Straight_IRGateStatus(NULL,&active) && active);
+            read_ir(op==STRAIGHT_IR_RISING?310:440);
+            read_ir(op==STRAIGHT_IR_RISING?410:390);
+            read_ir(op==STRAIGHT_IR_RISING?420:380);
+            assert(turn_calls==1 && Lateral_State()==LATERAL_RUNNING);
+            lateral_status_t current;Lateral_Status(&current);
+            assert(current.distance_cm_x10==(op==STRAIGHT_IR_RISING?400U:530U));
+            Lateral_Stop();assert(Lateral_State()==LATERAL_ABORTED);
+        }
+    setup();assert(Lateral_StartOnIREdge(0,STRAIGHT_IR_GT,40,1)==-2);
+    setup();assert(Lateral_StartOnIREdge(0,STRAIGHT_IR_RISING,40,1)==0);
+    Lateral_Stop();Lateral_Step();assert(turn_calls==0 && Lateral_State()==LATERAL_ABORTED);
     setup(); assert(Lateral_StartAfterIREdge(10,0,STRAIGHT_IR_RISING,40)==0);
     gate(); read_ir(200); read_ir(410); /* first below-threshold sample starts the minimum cache */
     read_ir(300); read_ir(310); read_ir(410); read_ir(420);

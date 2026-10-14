@@ -171,7 +171,7 @@
 #define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
 /* All active IR comparisons use low speed, including startup and gated entry. */
-#define IR_COMMAND_DETECT_PWM            2730U
+#define IR_COMMAND_DETECT_PWM            2700U
 #define IR_COMMAND_TIMEOUT_MS           30000U
 #define IR_COMMAND_MAX_TRAVEL_CM         200U
 

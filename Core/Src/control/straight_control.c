@@ -659,6 +659,43 @@ int Straight_StartCm(int32_t target_cm)
     return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0);
 }
 
+int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,
+    uint32_t *us_mm, uint32_t *ir_mm, uint32_t *distance_mm)
+{
+    if (sc_state == STRAIGHT_RUNNING) return -3;
+    if (direction != 1 && direction != -1) return -2;
+    uint32_t initial_us = Ultrasonic_LastGetMm, minimum_ir;
+    if (initial_us == UINT32_MAX || sc_state != STRAIGHT_DONE ||
+        sc_ir_comparison != STRAIGHT_IR_RISING || !sc_ir_mode ||
+        !Straight_IRFirstEdgeReading(&minimum_ir)) return -5;
+    int64_t total = (int64_t)initial_us + minimum_ir + (int64_t)offset_cm * 10;
+    if (total < MIN_COMMAND_DISTANCE_CM * 10 || total > MAX_COMMAND_DISTANCE_CM * 10) return -2;
+    uint32_t mm = (uint32_t)total;
+    int32_t seed = (int32_t)((mm + 9U) / 10U);
+    int rc = Straight_StartCmInternal(direction * seed,0U,0,STRAIGHT_IR_GT,0U,0U,0);
+    if (rc) return rc;
+    /* Retain sensor mm precision instead of rounding the travel to whole cm. */
+    float cm=mm/10.0f, revolutions;
+    if (cm <= SHORT_PROFILE_MAX_CM) {
+        revolutions = (cm + SHORT_CALIBRATION_OFFSET_CM
+            - (direction<0 ? SHORT_REVERSE_OVERSHOOT_COMP_CM : SHORT_FORWARD_OVERSHOOT_COMP_CM)
+            + GOCM_BRAKE_DELAY_CM) / WHEEL_CIRCUMFERENCE_CM;
+    } else {
+        revolutions = cm/WHEEL_CIRCUMFERENCE_CM
+            - (direction<0 ? LONG_REVERSE_REV_ERROR_COMPENSATION : LONG_FORWARD_REV_ERROR_COMPENSATION)
+            + GOCM_BRAKE_DELAY_CM/WHEEL_CIRCUMFERENCE_CM;
+    }
+    sc_target_left_counts = revolutions*LEFT_COUNTS_PER_REV;
+    sc_target_right_counts = revolutions*RIGHT_COUNTS_PER_REV;
+    if (us_mm) *us_mm=initial_us;
+    if (ir_mm) *ir_mm=minimum_ir;
+    if (distance_mm) *distance_mm=mm;
+    MotionLog_Write("STRAIGHT,US_IR_OFFSET,us_mm=%lu,ir_min_mm=%lu,offset_cm=%ld,target_mm=%lu,dir=%s",
+        (unsigned long)initial_us,(unsigned long)minimum_ir,(long)offset_cm,(unsigned long)mm,
+        direction>0 ? "FORWARD" : "BACKWARD");
+    return 0;
+}
+
 int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
 {
     if (target_cm < MIN_COMMAND_DISTANCE_CM || target_cm > STRAIGHT_CAL_MAX_DISTANCE_CM ||

@@ -21,6 +21,10 @@ void Straight_Init(void);
 /* Holds the route's planned chassis heading in either gear. The shared
  * motion_heading module preserves error across straight and turn commands. */
 int Straight_StartCm(int32_t target_cm);
+/* Freeze US,GET + current successful shared RISING minimum + offset (cm).
+ * Optional outputs are mm. -5 means unavailable cache; -2 invalid sum. */
+int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,
+    uint32_t *us_mm, uint32_t *ir_mm, uint32_t *distance_mm);
 /* Forward-only short calibration with fixed steering; gyro measurement,
  * encoder synchronization, distance stop and fault handling remain active.
  * Pulse must be within +/-100 us of centre. Applies to this command only. */

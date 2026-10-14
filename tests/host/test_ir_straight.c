@@ -8,6 +8,7 @@
 #include "drivers/robot_hw.h"
 #include "sensors/ir_sensor.h"
 #include "sensors/ultrasonic_sensor.h"
+uint32_t Ultrasonic_LastGetMm=UINT32_MAX;
 static uint32_t tick;
 static int mock_us_reads;
 static int drives, adc_fail, ir_reads, mock_takeups, mock_unscaled;
@@ -85,7 +86,7 @@ static void reset(void)
     IRSensorDistanceReading zero = {0};
     ultrasonic_sample_t us_zero = {0};
     mock_ultrasonic = us_zero;
-    MotionLog_Init();Straight_Init();MotionHeading_SetEnabled(1U);tick=0;drives=0;adc_fail=0;ir_reads=0;encoder_delta=0;mock_takeups=0;mock_unscaled=0;mock_us_reads=0;
+    MotionLog_Init();Ultrasonic_LastGetMm=UINT32_MAX;Straight_Init();MotionHeading_SetEnabled(1U);tick=0;drives=0;adc_fail=0;ir_reads=0;encoder_delta=0;mock_takeups=0;mock_unscaled=0;mock_us_reads=0;
     mock_yaw = mock_rate = mock_brake_rate = mock_last_rate = 0.0f;
     mock_gyro_ok = 1U; mock_braking = mock_brake_sample_pending = 0U;
     mock_servo = mock_drive_servo = SERVO_CENTER_US;
@@ -272,6 +273,35 @@ static void test_gocm_ir(void)
     assert(Straight_State()==STRAIGHT_SEARCH_LIMIT);
     puts("PASS: continuous GOCM+IR both gears/sides/operators, no pre-gate reads/brake, exact encoder gate, bounds/STOP/timeout/travel limit");
 }
+static void test_cached_us_ir(void)
+{
+    for(int dir=-1;dir<=1;dir+=2) for(int side=0;side<2;side++) {
+        reset();ir.left_status=ir.right_status=IR_RANGE_VALID;
+        ir.left_cm_x10=ir.right_cm_x10=400;
+        assert(Straight_StartUntilIRCm(50,side,STRAIGHT_IR_RISING)==0);
+        ir.left_cm_x10=ir.right_cm_x10=350;step();
+        ir.left_cm_x10=ir.right_cm_x10=250;step();
+        ir.left_cm_x10=ir.right_cm_x10=510;step();step();assert(Straight_State()==STRAIGHT_DONE);
+        Ultrasonic_LastGetMm=602;uint32_t us,minimum,mm;
+        assert(Straight_StartFromUsIR(-10,dir,&us,&minimum,&mm)==0);
+        assert(us==602 && minimum==250 && mm==752 && mock_direction==dir);
+        assert(Straight_StartFromUsIR(0,dir,0,0,0)==-3);
+        Ultrasonic_LastGetMm=1000;encoder_delta=6000;step();encoder_delta=0;finish_distance();
+        assert(Straight_StartFromUsIR(0,dir,0,0,0)==-5); /* shared process cache consumed by new motion */
+    }
+    reset();assert(Straight_StartFromUsIR(0,1,0,0,0)==-5 && drives==0);
+    reset();ir.left_status=IR_RANGE_VALID;ir.left_cm_x10=550;
+    assert(Straight_StartUntilIRCm(50,0,STRAIGHT_IR_FALLING)==0);step();
+    ir.left_cm_x10=400;step();step();Ultrasonic_LastGetMm=600;
+    assert(Straight_StartFromUsIR(0,1,0,0,0)==-5);
+    reset();ir.left_status=IR_RANGE_VALID;ir.left_cm_x10=300;
+    assert(Straight_StartUntilIRCm(50,0,STRAIGHT_IR_RISING)==0);step();ir.left_cm_x10=510;step();step();
+    assert(Straight_StartFromUsIR(0,1,0,0,0)==-5);Ultrasonic_LastGetMm=600;
+    assert(Straight_StartFromUsIR(-100,1,0,0,0)==-2);
+    assert(Straight_StartFromUsIR(INT32_MAX,1,0,0,0)==-2);
+    puts("PASS: shared RISING minimum + US GET + signed offset, both gears/sensors, frozen mm target, cache/range checks");
+}
+
 static void test_ir_low_speed(void)
 {
     for (int dir=-1; dir<=1; dir+=2)
@@ -294,6 +324,7 @@ static void test_ir_low_speed(void)
 int main(void)
 {
     test_ir_low_speed();
+    test_cached_us_ir();
     test_untilus_initial_distance();
 
 

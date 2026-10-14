@@ -29,6 +29,9 @@ void Lateral_Init(void);
 int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10);
 int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
                              straight_ir_comparison_t comparison, int32_t threshold_cm);
+/* Immediate IR edge detection, without a preceding encoder distance gate. */
+int Lateral_StartOnIREdge(uint8_t side, straight_ir_comparison_t comparison,
+    int32_t threshold_cm, int8_t direction);
 void Lateral_Step(void);
 void Lateral_Stop(void);
 lateral_state_t Lateral_State(void);

@@ -136,8 +136,10 @@ static const char *const fast_left2_commands[] =
     "TURN,RIGHT,R=35,A=180",
     "STRAIGHT,RIGHTIR,RISING,50",
     "TURN,RIGHT,R=35,A=90",
-	"SEARCHLATERAL,RIGHT,50,50",
-    "STRAIGHT,UNTILUS,15",
+	// "SEARCHLATERAL,RIGHT,50,50",
+    "STRAIGHT,GOCM,US+IR+OFFSET,-25",
+    "STRAIGHT,RIGHTIR,RISING,50,LATERAL",
+    "STRAIGHT,UNTILUS,16",
 };
 static const char *const fast_right1_commands[] =
 {
@@ -164,8 +166,10 @@ static const char *const fast_right2_commands[] =
     "TURN,LEFT,R=35,A=180",
     "STRAIGHT,LEFTIR,RISING,50",
     "TURN,LEFT,R=35,A=90",
-	"SEARCHLATERAL,LEFT,50,50",
-    "STRAIGHT,UNTILUS,15",
+	// "SEARCHLATERAL,LEFT,50,50",
+    "STRAIGHT,GOCM,US+IR+OFFSET,-25",
+    "STRAIGHT,LEFTIR,RISING,50,LATERAL",
+    "STRAIGHT,UNTILUS,16",
 };
 
 typedef enum
@@ -1369,8 +1373,27 @@ static void DispatchLine(char *line)
         const char *ir_value = explicit_direction ? tok4 : tok3;
         const char *ir_extra = explicit_direction ? tok5 : tok4;
         int8_t ir_direction = tok1 && strcmp(tok1, "BACKWARD") == 0 ? -1 : 1;
-        if (ir_side && (strcmp(ir_side, "LEFTIR") == 0 || strcmp(ir_side, "RIGHTIR") == 0) &&
-            ir_op && ir_extra == NULL)
+        if (ir_side && !strcmp(ir_side,"GOCM") && ir_op && !strcmp(ir_op,"US+IR+OFFSET"))
+        {
+            int32_t offset; uint32_t us,ir,mm;
+            if (!ir_value || ir_extra || !ParseIntStrict(ir_value,&offset)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
+            int rc=Straight_StartFromUsIR(offset,ir_direction,&us,&ir,&mm);
+            if (!rc) {
+                pending_motion=PENDING_MOTION_STRAIGHT;
+                pending_straight_cm=ir_direction*(int32_t)((mm+9U)/10U);
+                char msg[176];
+                snprintf(msg,sizeof(msg),"OK,mode=US_IR_OFFSET,dir=%s,us_mm=%lu,ir_min_mm=%lu,offset_cm=%ld,target_mm=%lu\r\n",
+                    ir_direction>0 ? "FORWARD" : "BACKWARD",(unsigned long)us,(unsigned long)ir,(long)offset,(unsigned long)mm);
+                Cmd_Send(msg);
+            } else if (rc==-5) Cmd_Reject("ERR,CACHE_INVALID");
+            else if (rc==-2) Cmd_Reject("ERR,BAD_VALUE");
+            else if (rc==-1) Cmd_Reject("ERR,NO_DEVICE");
+            else if (rc==-4) Cmd_Reject("ERR,NOT_STILL");
+            else Cmd_Reject("ERR,BUSY");
+        }
+        else if (ir_side && (strcmp(ir_side, "LEFTIR") == 0 || strcmp(ir_side, "RIGHTIR") == 0) &&
+            ir_op && (ir_extra == NULL || (!strcmp(ir_extra,"LATERAL") && !(explicit_direction ? tok6 : tok5))))
         {
             int32_t cm;
             int rc;
@@ -1384,13 +1407,18 @@ static void DispatchLine(char *line)
             }
             if (!ParseIntStrict(ir_value != NULL ? ir_value : ir_op, &cm)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
             if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
-            rc = Straight_StartUntilIRDirectionCm(cm, strcmp(ir_side, "RIGHTIR") == 0, comparison, ir_direction);
+            if (ir_extra && comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING)
+            { Cmd_Reject("ERR,BAD_ARGS"); return; }
+            rc = ir_extra ? Lateral_StartOnIREdge(!strcmp(ir_side,"RIGHTIR"),comparison,cm,ir_direction)
+                          : Straight_StartUntilIRDirectionCm(cm, strcmp(ir_side, "RIGHTIR") == 0, comparison, ir_direction);
             if (rc == 0)
             {
-                char msg[96];
-                pending_motion = PENDING_MOTION_STRAIGHT;
+                char msg[128];
+                pending_motion = ir_extra ? PENDING_MOTION_LATERAL : PENDING_MOTION_STRAIGHT;
                 pending_straight_cm = 0;
-                snprintf(msg, sizeof(msg), "OK,mode=%s,op=%s,threshold_cm=%ld,dir=%s\r\n", ir_side,
+                if (ir_extra)
+                    snprintf(msg,sizeof(msg),"OK,mode=IR_LATERAL,ir=%s,op=%s,threshold_cm=%ld,dir=%s\r\n",ir_side,IRComparisonText(comparison),(long)cm,ir_direction>0?"FORWARD":"BACKWARD");
+                else snprintf(msg, sizeof(msg), "OK,mode=%s,op=%s,threshold_cm=%ld,dir=%s\r\n", ir_side,
                          IRComparisonText(comparison), (long)cm,
                          ir_direction > 0 ? "FORWARD" : "BACKWARD");
                 Cmd_Send(msg);

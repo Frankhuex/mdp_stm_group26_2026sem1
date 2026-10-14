@@ -72,6 +72,20 @@ int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
     return 0;
 }
 
+int Lateral_StartOnIREdge(uint8_t side, straight_ir_comparison_t comparison,
+    int32_t threshold_cm, int8_t direction)
+{
+    if (lc.state == LATERAL_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
+        Turn_State() == TURN_RUNNING) return -3;
+    if (side > 1U || (comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING)) return -2;
+    int rc = Straight_StartUntilIRDirectionCm(threshold_cm,side,comparison,direction);
+    if (rc) return rc;
+    lateral_status_t empty = {0}; lc = empty;
+    lc.side = side; lc.from_ir = lc.from_edge = 1U; lc.stage = 0U;
+    lc.state = LATERAL_RUNNING; lc.straight_state = Straight_State();
+    return 0;
+}
+
 void Lateral_Step(void)
 {
     if (lc.state != LATERAL_RUNNING) return;

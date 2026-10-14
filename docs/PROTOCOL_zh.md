@@ -423,3 +423,11 @@ UNTILUS 的定长计算与旧版持续检测退化路径均取消累计行程上
 US,GET 会将本次有效毫米测距保存到独立变量 `Ultrasonic_LastGetMm`（ultrasonic_sensor.h）；未测量、初始化失败、无有效回波为 UINT32_MAX，BUSY 拒绝不修改缓存。不会覆盖 UNTILUS 的首尾缓存；其他超声读取也不更新此变量。更新时发送 LOG,CACHE,US_GET。可用 `LATERAL,RIGHT,20;US,GET;LATERAL,LEFT,20` 在侧移后停车测量，再侧移返回；两次 LATERAL 各自按完整侧移距离计算，不增加 IR 补偿。BYPASS 保留原三段转弯。
 
 LEFTIR,GET / RIGHTIR,GET 分别将有效距离缓存到 IRSensor_LeftLastGetCmX10 / IRSensor_RightLastGetCmX10，单位为 0.1 cm（与毫米等价），300 表示 30 cm。未查询、NEAR/FAR 或读取错误为 UINT32_MAX；只更新所选侧，另一侧保留，BUSY 不修改。缓存独立于 IR 停车与 RISING 最小值，其他读取不覆盖。更新时发送 LOG,CACHE,IR_GET。
+
+### US + IR 缓存定长直行
+
+`STRAIGHT,GOCM,US+IR+OFFSET,n`，或 `STRAIGHT,FORWARD/BACKWARD,GOCM,US+IR+OFFSET,n`。不指定 IR 左右，使用当前共用的成功 RISING 最小值：目标毫米距离 = Ultrasonic_LastGetMm + 共用 RISING 最小值 + n×10，n 为有符号整数厘米。默认前进，BACKWARD 仅改变移动方向，不改变距离公式；不自动增加 LATERAL 的 10 cm 补偿。
+
+启动时冻结缓存和结果，沿用 GOCM 速度、倍率、方向纠偏及距离补偿，保留毫米精度；计算结果须处于当前普通 GOCM 距离范围（MIN_COMMAND_DISTANCE_CM～MAX_COMMAND_DISTANCE_CM）。US 查询缓存无效、没有成功的 RISING 过程缓存或最后检测为 FALLING 时返回 ERR,CACHE_INVALID；无效总距离返回 ERR,BAD_VALUE，运动中返回 BUSY。该共享过程缓存会被下一条直行/IR 运动重置，新指令必须在缓存仍有效时使用；没有新增左右历史缓存。接受回报含 mode=US_IR_OFFSET、US/IR、offset_cm 和 target_mm；LOG,STRAIGHT,US_IR_OFFSET 记录计算项。可用于分号批次，例如 `STRAIGHT,RIGHTIR,RISING,50;US,GET;STRAIGHT,GOCM,US+IR+OFFSET,-10`。
+
+无前段距离的越沿侧移：`STRAIGHT,LEFTIR/RIGHTIR,RISING/FALLING,n,LATERAL`，也支持 `STRAIGHT,FORWARD/BACKWARD,LEFTIR/RIGHTIR,RISING/FALLING,n,LATERAL`。省略方向默认前进，起步即读取 IR，不需要 GOCM。沿用两阶段连续两次确认、RISING 最小值/FALLING 首阶段缓存，停车后加 10 cm 向对应侧执行前进侧移；BACKWARD 只作用于前段检测行驶。只有 RISING/FALLING 支持后缀，GT/LT 加 LATERAL 返回 BAD_ARGS。接受模式为 IR_LATERAL，最终只输出一次 DONE,LATERAL，STOP/失败阻止后续动作。原 GOCM 门控版本及距离范围保持。
