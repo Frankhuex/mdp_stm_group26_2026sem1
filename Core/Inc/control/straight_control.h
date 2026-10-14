@@ -37,6 +37,8 @@ uint32_t Straight_FixedSteeringUs(void);
 int Straight_StartUntilUltrasonicCm(int32_t threshold_cm);
 /* AUTO confirms valid starting distance; missing starting echo selects reverse creep. */
 int Straight_StartUntilUltrasonicAutoCm(int32_t threshold_cm);
+/* AUTO measurement/motion without modifying any persistent US cache. */
+int Straight_StartUntilUltrasonicAutoNoCacheCm(int32_t threshold_cm);
 int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction);
 typedef enum {
     STRAIGHT_IR_GT = 0, STRAIGHT_IR_LT,
@@ -67,6 +69,9 @@ int Straight_IRStatus(int32_t *threshold_cm, uint32_t *cm_x10);
 /* Last condition-triggered stop distance per side, in 0.1 cm (237 = 23.7 cm).
  * Updated only for that side on IR DONE; retained across later commands.
  * UINT32_MAX = no cached stop since Init, FAR, or GT read failure. */
+/* Mean wheel travel on successful standalone IR stop, mm; UINT32_MAX unavailable. */
+extern uint32_t Straight_IRTravelMm;
+void Straight_SetIRTravelCacheEnabled(uint8_t enabled);
 extern uint32_t Straight_LeftIRStopCmX10;
 extern uint32_t Straight_RightIRStopCmX10;
 /* First fresh valid US sample before drive for each UNTILUS gear, mm.

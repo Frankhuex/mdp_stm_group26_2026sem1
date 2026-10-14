@@ -1,6 +1,7 @@
 /* Host test links the production straight controller with simulated hardware. */
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "control/straight_control.h"
 #include "control/motion_log.h"
 #include "control/straight_tuning.h"
@@ -296,9 +297,20 @@ static void test_cached_us_ir(void)
     assert(Straight_StartFromUsIR(0,1,0,0,0)==-5);
     reset();ir.left_status=IR_RANGE_VALID;ir.left_cm_x10=300;
     assert(Straight_StartUntilIRCm(50,0,STRAIGHT_IR_RISING)==0);step();ir.left_cm_x10=510;step();step();
-    assert(Straight_StartFromUsIR(0,1,0,0,0)==-5);Ultrasonic_LastGetMm=600;
+    Ultrasonic_LastGetMm=UINT32_MAX;
     assert(Straight_StartFromUsIR(-100,1,0,0,0)==-2);
     assert(Straight_StartFromUsIR(INT32_MAX,1,0,0,0)==-2);
+    uint32_t used_us,ir_min,total;
+    assert(Straight_StartFromUsIR(-25,1,&used_us,&ir_min,&total)==0);
+    assert(used_us==600 && ir_min==300 && total==650 && Ultrasonic_LastGetMm==UINT32_MAX);
+    char line[256];int default_logged=0,calculation_logged=0,rejection_logged=0;
+    while(MotionLog_Read(line,sizeof(line))) {
+        if(strstr(line,"us_source=DEFAULT"))default_logged=1;
+        if(strstr(line,"CALC")&&strstr(line,"total_mm=650"))calculation_logged=1;
+        if(strstr(line,"REJECT,reason=DISTANCE_RANGE"))rejection_logged=1;
+    }
+    assert(default_logged && calculation_logged && rejection_logged);
+    Straight_Stop();
     puts("PASS: shared RISING minimum + US GET + signed offset, both gears/sensors, frozen mm target, cache/range checks");
 }
 

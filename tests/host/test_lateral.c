@@ -1,3 +1,7 @@
+#include "control/bypass_control.h"
+uint32_t Bypass_ForwardDistanceMm = UINT32_MAX;
+uint32_t Straight_IRTravelMm = UINT32_MAX;
+void Straight_SetIRTravelCacheEnabled(uint8_t enabled) { (void)enabled; }
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -59,6 +63,16 @@ static lateral_status_t status(void)
 { lateral_status_t st; Lateral_Status(&st); return st; }
 int main(void)
 {
+    for (uint8_t side = 0; side < 2; side++) {
+        reset();
+        Bypass_ForwardDistanceMm = UINT32_MAX;
+        assert(Lateral_Start(side, 0, 270) == 0);
+        assert(Bypass_ForwardDistanceMm == 943U);
+        reset();
+        fail_call = 1;
+        assert(Lateral_Start(side, 0, 270) != 0);
+        assert(Bypass_ForwardDistanceMm == 943U);
+    }
     for (uint8_t side = 0; side < 2; side++)
     {
         reset();

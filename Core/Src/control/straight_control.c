@@ -45,6 +45,9 @@ static uint8_t sc_until_us;
 static uint8_t sc_ir_strict_gt;
 static int32_t sc_ir_gate_cm;
 static uint32_t sc_ir_search_limit_mm;
+uint32_t Straight_IRTravelMm = UINT32_MAX;
+static uint8_t sc_ir_travel_cache_enabled;
+void Straight_SetIRTravelCacheEnabled(uint8_t enabled) { sc_ir_travel_cache_enabled = enabled; }
 static uint8_t sc_ir_active;
 static uint32_t sc_ir_first_edge_cm_x10;
 static uint8_t sc_ir_first_edge_valid;
@@ -68,6 +71,7 @@ uint32_t Straight_AutoUSEndMm = UINT32_MAX;
 static uint8_t sc_us_auto;
 static uint8_t sc_us_distance_mode, sc_us_legacy_fallback;
 static uint8_t sc_us_start_reading_cached;
+static uint8_t sc_us_no_cache;
 static uint8_t sc_us_moving;
 static int32_t sc_us_threshold_cm;
 static ultrasonic_sample_t sc_us_sample;
@@ -94,6 +98,7 @@ static float sc_sync_integral = 0.0f;
 static float sc_speed_error_filt = 0.0f;
 static uint8_t sc_us_approach_mode = 0U;
 static uint32_t sc_us_base_pwm = 0U;
+static uint32_t sc_gocm_base_pwm;
 static uint8_t sc_us_kick_complete = 0U;
 static uint8_t sc_us_near_start;
 static uint32_t sc_us_stop_lead_mm;
@@ -282,6 +287,13 @@ static void FinishIR(straight_state_t state)
         MotionHeading_Degrade();
         MotionHeading_End();
     }
+    if (state == STRAIGHT_DONE && sc_ir_mode && sc_ir_travel_cache_enabled) {
+        float mm = 5.0f * (sc_total_left_counts / LEFT_COUNTS_PER_CM +
+                          sc_total_right_counts / RIGHT_COUNTS_PER_CM);
+        Straight_IRTravelMm = (uint32_t)(mm + 0.5f);
+        MotionLog_Write("CACHE,IR_TRAVEL,mm=%lu,dir=%s",(unsigned long)Straight_IRTravelMm,
+            sc_dir > 0 ? "FORWARD" : "BACKWARD");
+    }
     sc_final_elapsed_ms = HAL_GetTick() - sc_start_tick;
     sc_state = state;
 }
@@ -375,6 +387,35 @@ static uint32_t SlewPwm(uint32_t current, uint32_t target, float dt_sec)
     return current;
 }
 
+static uint32_t SmoothDistancePWM(float dt_sec)
+{
+    float left_target=sc_target_left_counts/LEFT_COUNTS_PER_CM;
+    float right_target=sc_target_right_counts/RIGHT_COUNTS_PER_CM;
+    float left_remaining=(sc_target_left_counts-sc_total_left_counts)/LEFT_COUNTS_PER_CM;
+    float right_remaining=(sc_target_right_counts-sc_total_right_counts)/RIGHT_COUNTS_PER_CM;
+    /* Start slowing when the first wheel enters the zone; stop still requires both. */
+    float remaining=left_remaining<right_remaining ? left_remaining : right_remaining;
+    float target=left_target<right_target ? left_target : right_target;
+    float window=target*GOCM_DECEL_MAX_FRACTION;
+    if(window>GOCM_DECEL_DISTANCE_CM) window=GOCM_DECEL_DISTANCE_CM;
+    float progress=window>0 ? remaining/window : 0;
+    if(progress<0) progress=0;
+    if(progress>1) progress=1;
+    float smooth=progress*progress*(3.0f-2.0f*progress);
+    uint32_t cruise=sc_profile==STRAIGHT_PROFILE_SHORT ? SHORT_RAMP_PEAK_PWM : LONG_BASE_PWM;
+    uint32_t desired=(uint32_t)(GOCM_FINAL_PWM + (cruise-GOCM_FINAL_PWM)*smooth + 0.5f);
+    uint32_t step=(uint32_t)(GOCM_PWM_SLEW_PER_SECOND*dt_sec+0.5f);
+    if(!step) step=1;
+    if(sc_gocm_base_pwm>desired) {
+        uint32_t difference=sc_gocm_base_pwm-desired;
+        sc_gocm_base_pwm-=difference<step ? difference : step;
+    } else {
+        uint32_t difference=desired-sc_gocm_base_pwm;
+        sc_gocm_base_pwm+=difference<step ? difference : step;
+    }
+    return sc_gocm_base_pwm;
+}
+
 static uint16_t StraightCenterUs(int8_t dir)
 {
     int32_t trim = (dir < 0) ? STRAIGHT_REVERSE_TRIM_US
@@ -445,8 +486,11 @@ void Straight_Init(void)
     Straight_RightIRStopCmX10 = UINT32_MAX;
     Straight_ForwardUSStartMm = Straight_BackwardUSStartMm = UINT32_MAX;
     Straight_ForwardUSEndMm = Straight_BackwardUSEndMm = UINT32_MAX;
+    Straight_IRTravelMm = UINT32_MAX;
+    sc_ir_travel_cache_enabled = 0U;
     Straight_AutoUSStartMm = Straight_AutoUSEndMm = UINT32_MAX;
     sc_us_auto = 0U;
+    sc_us_no_cache = 0U;
     sc_us_start_reading_cached = 0U;
     sc_fixed_steer_us = 0U;
     TraceReset();
@@ -490,7 +534,7 @@ void Straight_Init(void)
 
 static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
                                     int32_t ir_threshold_cm, straight_ir_comparison_t comparison,
-                                    uint16_t fixed_steer_us, uint8_t strict_gt, int32_t gate_cm)
+                                    uint16_t fixed_steer_us, uint8_t strict_gt, int32_t gate_cm, uint8_t search_prepare)
 {
     int32_t abs_cm;
     int prep_rc;
@@ -509,6 +553,19 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
      * starts centred regardless of the previous turn direction. */
     if (fixed_steer_us)
         RobotHW_ServoSetUs(fixed_steer_us);
+    else if (search_prepare) {
+        uint32_t centre = StraightCenterUs((target_cm < 0) ? -1 : 1);
+        /* Explicit larger sweep for search after turns; keep the same final trim. */
+        uint32_t pre = centre > CMD_SERVO_LEFT_US + SEARCH_SERVO_BACKLASH_US
+            ? centre - SEARCH_SERVO_BACKLASH_US : CMD_SERVO_LEFT_US;
+        RobotHW_ServoSetUs(pre);
+        HAL_Delay(SEARCH_SERVO_PRE_HOLD_MS);
+        RobotHW_ServoSetUs(centre);
+        HAL_Delay(SEARCH_SERVO_CENTER_HOLD_MS);
+        MotionLog_Write("SEARCHLATERAL,CENTER,pre_us=%lu,target_us=%lu,pre_ms=%u,center_ms=%u",
+            (unsigned long)pre,(unsigned long)centre,
+            (unsigned)SEARCH_SERVO_PRE_HOLD_MS,(unsigned)SEARCH_SERVO_CENTER_HOLD_MS);
+    }
     else
         RobotHW_ServoSetUsTakeup(StraightCenterUs((target_cm < 0) ? -1 : 1));
     prep_rc = RobotHW_PrepareMotionSensors();
@@ -524,6 +581,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     sc_ir_mode = ir_mode;
     sc_ir_raw = UINT32_MAX; sc_ir_range = IR_RANGE_ERROR; sc_ir_last_tick = HAL_GetTick();
     sc_ir_gate_cm = gate_cm;
+    sc_ir_travel_cache_enabled = 0U;
     sc_ir_search_limit_mm = 0U;
     sc_ir_active = gate_cm == 0;
     sc_ir_strict_gt = strict_gt;
@@ -536,6 +594,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
     sc_profile = (abs_cm <= SHORT_PROFILE_MAX_CM)
                ? STRAIGHT_PROFILE_SHORT
                : STRAIGHT_PROFILE_LONG;
+    sc_gocm_base_pwm = sc_profile == STRAIGHT_PROFILE_SHORT ? SHORT_KICKSTART_PWM : LONG_BASE_PWM;
     sc_dir = (target_cm < 0) ? -1 : 1;
     sc_fixed_steer_us = fixed_steer_us;
     sc_target_cm_signed = target_cm;
@@ -656,7 +715,7 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 
 int Straight_StartCm(int32_t target_cm)
 {
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0, 0U);
 }
 
 int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,
@@ -664,16 +723,34 @@ int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,
 {
     if (sc_state == STRAIGHT_RUNNING) return -3;
     if (direction != 1 && direction != -1) return -2;
-    uint32_t initial_us = Ultrasonic_LastGetMm, minimum_ir;
-    if (initial_us == UINT32_MAX || sc_state != STRAIGHT_DONE ||
-        sc_ir_comparison != STRAIGHT_IR_RISING || !sc_ir_mode ||
-        !Straight_IRFirstEdgeReading(&minimum_ir)) return -5;
+    uint8_t us_default = Ultrasonic_LastGetMm == UINT32_MAX || Ultrasonic_LastGetMm == 0U;
+    uint32_t initial_us = us_default ? GOCM_US_IR_DEFAULT_US_MM : Ultrasonic_LastGetMm, minimum_ir;
+    MotionLog_Write("STRAIGHT,US_IR_OFFSET,INPUT,us_mm=%lu,us_source=%s,offset_cm=%ld,dir=%s",
+        (unsigned long)initial_us,us_default ? "DEFAULT" : "CACHE",(long)offset_cm,direction>0 ? "FORWARD" : "BACKWARD");
+    if (sc_state != STRAIGHT_DONE || sc_ir_comparison != STRAIGHT_IR_RISING || !sc_ir_mode ||
+        !Straight_IRFirstEdgeReading(&minimum_ir)) {
+        MotionLog_Write("STRAIGHT,US_IR_OFFSET,REJECT,reason=IR_CACHE_INVALID,straight_state=%d,ir_mode=%u,ir_op=%d,armed=%u,valid=%u",
+            (int)sc_state,sc_ir_mode,(int)sc_ir_comparison,sc_ir_edge_armed,sc_ir_first_edge_valid);
+        return -5;
+    }
     int64_t total = (int64_t)initial_us + minimum_ir + (int64_t)offset_cm * 10;
-    if (total < MIN_COMMAND_DISTANCE_CM * 10 || total > MAX_COMMAND_DISTANCE_CM * 10) return -2;
+    /* Print out-of-range totals without relying on nano printf long-long support. */
+    char total_text[32],digits[24];uint32_t pos=0,n=0;
+    uint64_t magnitude=total<0 ? (uint64_t)(-total) : (uint64_t)total;
+    do { digits[n++]=(char)('0'+magnitude%10U);magnitude/=10U; } while(magnitude);
+    if(total<0) total_text[pos++]='-';
+    while(n) total_text[pos++]=digits[--n];
+    total_text[pos]='\0';
+    MotionLog_Write("STRAIGHT,US_IR_OFFSET,CALC,us_mm=%lu,ir_min_mm=%lu,offset_cm=%ld,total_mm=%s,min_mm=%ld,max_mm=%ld",
+        (unsigned long)initial_us,(unsigned long)minimum_ir,(long)offset_cm,total_text,
+        (long)MIN_COMMAND_DISTANCE_CM*10,(long)MAX_COMMAND_DISTANCE_CM*10);
+    if (total < MIN_COMMAND_DISTANCE_CM * 10 || total > MAX_COMMAND_DISTANCE_CM * 10) {
+        MotionLog_Write("STRAIGHT,US_IR_OFFSET,REJECT,reason=DISTANCE_RANGE,total_mm=%s",total_text);return -2;
+    }
     uint32_t mm = (uint32_t)total;
     int32_t seed = (int32_t)((mm + 9U) / 10U);
-    int rc = Straight_StartCmInternal(direction * seed,0U,0,STRAIGHT_IR_GT,0U,0U,0);
-    if (rc) return rc;
+    int rc = Straight_StartCmInternal(direction * seed,0U,0,STRAIGHT_IR_GT,0U,0U,0, 0U);
+    if (rc) { MotionLog_Write("STRAIGHT,US_IR_OFFSET,REJECT,reason=START_FAILED,rc=%d",rc);return rc; }
     /* Retain sensor mm precision instead of rounding the travel to whole cm. */
     float cm=mm/10.0f, revolutions;
     if (cm <= SHORT_PROFILE_MAX_CM) {
@@ -703,7 +780,7 @@ int Straight_StartCalibrationCm(int32_t target_cm, int32_t servo_us)
         servo_us > (int32_t)SERVO_CENTER_US + STRAIGHT_CAL_MAX_OFFSET_US ||
         servo_us <= (int32_t)CMD_SERVO_LEFT_US || servo_us >= (int32_t)CMD_SERVO_RIGHT_US)
         return -2;
-    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us, 0U, 0);
+    return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, (uint16_t)servo_us, 0U, 0, 0U);
 }
 
 uint32_t Straight_FixedSteeringUs(void) { return sc_fixed_steer_us; }
@@ -711,9 +788,12 @@ uint32_t Straight_FixedSteeringUs(void) { return sc_fixed_steer_us; }
 int Straight_StartCmThenIRBounded(int32_t distance_cm, uint8_t side,
     straight_ir_comparison_t comparison, int32_t threshold_cm, uint32_t limit_mm)
 {
-    if (!limit_mm || distance_cm <= 0) return -2;
-    int rc = Straight_StartCmThenIR(distance_cm, side, comparison, threshold_cm);
-    if (!rc) sc_ir_search_limit_mm = limit_mm;
+    if (!limit_mm || distance_cm < MIN_COMMAND_DISTANCE_CM || distance_cm > MAX_COMMAND_DISTANCE_CM ||
+        side > 1U || threshold_cm < 10 || threshold_cm > (side ? 60 : 50) ||
+        comparison < STRAIGHT_IR_GT || comparison > STRAIGHT_IR_FALLING) return -2;
+    int rc = Straight_StartCmInternal(distance_cm, side + 1U, threshold_cm, comparison,
+        0U, 0U, distance_cm, 1U);
+    if (!rc) { sc_ir_search_limit_mm = limit_mm; sc_ir_travel_cache_enabled = 0U; }
     return rc;
 }
 
@@ -737,7 +817,9 @@ int Straight_StartUntilIRDirectionCm(int32_t threshold_cm, uint8_t side,
     /* Match the actual driver calibration: LEFT 10..50, RIGHT 10..60 cm. */
     if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
         return -2;
-    return Straight_StartCmInternal(direction * MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U, 0U, 0);
+    int rc = Straight_StartCmInternal(direction * MAX_COMMAND_DISTANCE_CM, side + 1U, threshold_cm, comparison, 0U, 0U, 0, 0U);
+    if (!rc) sc_ir_travel_cache_enabled = 1U;
+    return rc;
 }
 
 uint8_t Straight_IRFirstEdgeReading(uint32_t *cm_x10)
@@ -762,7 +844,9 @@ int Straight_StartCmThenIR(int32_t distance_cm, uint8_t side,
         side > 1U || threshold_cm < 10 || threshold_cm > (side ? 60 : 50) ||
         comparison < STRAIGHT_IR_GT || comparison > STRAIGHT_IR_FALLING) return -2;
     int32_t gate = distance_cm < 0 ? -distance_cm : distance_cm;
-    return Straight_StartCmInternal(distance_cm, side + 1U, threshold_cm, comparison, 0U, 0U, gate);
+    int rc = Straight_StartCmInternal(distance_cm, side + 1U, threshold_cm, comparison, 0U, 0U, gate, 0U);
+    if (!rc) sc_ir_travel_cache_enabled = 1U;
+    return rc;
 }
 
 /* Composite lateral approach: FAR satisfies GT; acquisition errors must abort. */
@@ -771,7 +855,7 @@ int Straight_StartUntilIRGreaterValidCm(int32_t threshold_cm, uint8_t side)
     if (side > 1U || threshold_cm < 10 || threshold_cm > (side == 0U ? 50 : 60))
         return -2;
     return Straight_StartCmInternal(MAX_COMMAND_DISTANCE_CM, side + 1U,
-                                   threshold_cm, STRAIGHT_IR_GT, 0U, 1U, 0);
+                                   threshold_cm, STRAIGHT_IR_GT, 0U, 1U, 0, 0U);
 }
 
 /* RUNNING includes the stationary initial measurement wait, so every existing
@@ -781,12 +865,21 @@ int Straight_StartUntilUltrasonicCm(int32_t threshold_cm)
     return Straight_StartUntilUltrasonicDirectionCm(threshold_cm, 1);
 }
 
+static int StartUntilUltrasonicWithCache(int32_t threshold_cm, int8_t direction, uint8_t no_cache);
+int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction)
+{
+    return StartUntilUltrasonicWithCache(threshold_cm, direction, 0U);
+}
+int Straight_StartUntilUltrasonicAutoNoCacheCm(int32_t threshold_cm)
+{
+    return StartUntilUltrasonicWithCache(threshold_cm, 0, 1U);
+}
 int Straight_StartUntilUltrasonicAutoCm(int32_t threshold_cm)
 {
     return Straight_StartUntilUltrasonicDirectionCm(threshold_cm, 0);
 }
 
-int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direction)
+static int StartUntilUltrasonicWithCache(int32_t threshold_cm, int8_t direction, uint8_t no_cache)
 {
     int prep_rc;
     if (sc_state == STRAIGHT_RUNNING) return -3;
@@ -808,13 +901,15 @@ int Straight_StartUntilUltrasonicDirectionCm(int32_t threshold_cm, int8_t direct
     sc_until_us = 1U;
     sc_us_distance_mode = sc_us_legacy_fallback = 0U;
     sc_ir_mode = 0U;
+    sc_ir_travel_cache_enabled = 0U;
     sc_ir_search_limit_mm = 0U;
     sc_us_moving = 0U;
     sc_us_start_reading_cached = 0U;
     sc_us_auto = direction == 0;
-    if (sc_us_auto) Straight_AutoUSStartMm = Straight_AutoUSEndMm = UINT32_MAX;
-    else if (direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
-    else Straight_BackwardUSStartMm = Straight_BackwardUSEndMm = UINT32_MAX;
+    sc_us_no_cache = no_cache;
+    if (sc_us_auto && !sc_us_no_cache) Straight_AutoUSStartMm = Straight_AutoUSEndMm = UINT32_MAX;
+    else if (!sc_us_no_cache && direction > 0) Straight_ForwardUSStartMm = Straight_ForwardUSEndMm = UINT32_MAX;
+    else if (!sc_us_no_cache) Straight_BackwardUSStartMm = Straight_BackwardUSEndMm = UINT32_MAX;
     sc_us_threshold_cm = threshold_cm;
     sc_us_stop_reading_valid = 0U;
     sc_dir = direction;
@@ -863,7 +958,7 @@ static void FinishUltrasonic(straight_state_t state)
     }
     UltrasonicSensor_Cancel();
     FinishIR(state);
-    if (sc_state == STRAIGHT_DONE && sc_us_stop_reading_valid)
+    if (sc_state == STRAIGHT_DONE && sc_us_stop_reading_valid && !sc_us_no_cache)
     {
         /* Use the requested gear even when already reached without driving. */
         if (sc_us_auto) Straight_AutoUSEndMm = (uint32_t)sc_us_threshold_cm * 10U;
@@ -938,7 +1033,7 @@ static void StartUltrasonicDistance(uint32_t initial_mm)
     if (seed > MAX_COMMAND_DISTANCE_CM) seed = MAX_COMMAND_DISTANCE_CM;
     int8_t gear = sc_dir;
     sc_state = STRAIGHT_IDLE; /* Reuse normal preparation, PID, profiles and braking. */
-    int rc = Straight_StartCmInternal(gear * seed, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0);
+    int rc = Straight_StartCmInternal(gear * seed, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0, 0U);
     sc_until_us = 1U;
     if (rc) { FinishUltrasonic(rc == -4 ? STRAIGHT_STALL : STRAIGHT_SENSOR_ERROR); return; }
     sc_us_distance_mode = sc_us_moving = 1U;
@@ -978,7 +1073,7 @@ static void StepUltrasonic(void)
         {
             uint32_t target_mm = (uint32_t)sc_us_threshold_cm * 10U;
             sc_us_fail_count = 0U;
-            if (!sc_us_moving && !sc_us_start_reading_cached)
+            if (!sc_us_moving && !sc_us_start_reading_cached && !sc_us_no_cache)
             {
                 if (sc_us_auto) Straight_AutoUSStartMm = sample.distance_mm;
                 else if (sc_dir > 0) Straight_ForwardUSStartMm = sample.distance_mm;
@@ -1042,11 +1137,13 @@ static void StepUltrasonic(void)
             if (sc_us_fail_count < UINT8_MAX) sc_us_fail_count++;
             /* A missing echo cannot select arrival, but direction is explicit. */
             if (!sc_us_moving && (sc_us_auto || sc_dir < 0)) {
-                if (sc_us_auto) Straight_AutoUSStartMm = 0U;
-                else Straight_BackwardUSStartMm = 0U;
-                sc_us_start_reading_cached = 1U;
-                MotionLog_Write("CACHE,UNTILUS,kind=START,mode=%s,mm=%lu",
-                    sc_us_auto ? "AUTO" : sc_dir > 0 ? "FORWARD" : "BACKWARD",(unsigned long)0U);
+                if (!sc_us_no_cache) {
+                    if (sc_us_auto) Straight_AutoUSStartMm = 0U;
+                    else Straight_BackwardUSStartMm = 0U;
+                    sc_us_start_reading_cached = 1U;
+                    MotionLog_Write("CACHE,UNTILUS,kind=START,mode=%s,mm=%lu",
+                        sc_us_auto ? "AUTO" : sc_dir > 0 ? "FORWARD" : "BACKWARD",(unsigned long)0U);
+                }
                 StartUltrasonicDistance(0U); return;
             }
             sc_us_legacy_fallback = 1U;
@@ -1360,6 +1457,14 @@ static void Straight_StepInternal(void)
     {
         base_pwm = IR_COMMAND_DETECT_PWM;
     }
+    else if (!sc_ir_mode)
+    {
+        if(sc_profile==STRAIGHT_PROFILE_SHORT && elapsed_ms<SHORT_KICKSTART_DURATION_MS) {
+            base_pwm=SHORT_KICKSTART_PWM;
+            sc_gocm_base_pwm=base_pwm;
+            force_equal_kick=1U;
+        } else base_pwm=SmoothDistancePWM(dt_sec);
+    }
     else if (sc_profile == STRAIGHT_PROFILE_SHORT)
     {
         float avg_target_counts =
@@ -1423,11 +1528,13 @@ void Straight_Step(void)
         sc_us_stop_age_ms = 0U;
         sc_us_stop_direction = sc_dir;
         sc_us_stop_reading_valid = 1U;
-        if (sc_us_auto) Straight_AutoUSEndMm = sc_us_stop_mm;
-        else if (sc_dir > 0) Straight_ForwardUSEndMm = sc_us_stop_mm;
-        else Straight_BackwardUSEndMm = sc_us_stop_mm;
-        MotionLog_Write("CACHE,UNTILUS,kind=END,mode=%s,mm=%lu,source=TARGET",
-            sc_us_auto ? "AUTO" : sc_dir > 0 ? "FORWARD" : "BACKWARD",(unsigned long)sc_us_stop_mm);
+        if (!sc_us_no_cache) {
+            if (sc_us_auto) Straight_AutoUSEndMm = sc_us_stop_mm;
+            else if (sc_dir > 0) Straight_ForwardUSEndMm = sc_us_stop_mm;
+            else Straight_BackwardUSEndMm = sc_us_stop_mm;
+            MotionLog_Write("CACHE,UNTILUS,kind=END,mode=%s,mm=%lu,source=TARGET",
+                sc_us_auto ? "AUTO" : sc_dir > 0 ? "FORWARD" : "BACKWARD",(unsigned long)sc_us_stop_mm);
+        }
     }
     if (sc_state != STRAIGHT_RUNNING) TraceCapture('E', 1U);
     else if (sc_braking) TraceCapture('B', !was_braking);

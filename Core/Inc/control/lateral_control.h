@@ -13,6 +13,7 @@ typedef struct {
     uint8_t side; /* 0=LEFT, 1=RIGHT */
     uint8_t from_ir;
     uint8_t from_edge;
+    uint8_t from_encoder;
     uint8_t stage; /* 0=IR approach, 1/2=turn arcs; retained on failure */
     uint32_t initial_ir_cm_x10;
     uint32_t distance_cm_x10;
@@ -32,6 +33,7 @@ int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
 /* Immediate IR edge detection, without a preceding encoder distance gate. */
 int Lateral_StartOnIREdge(uint8_t side, straight_ir_comparison_t comparison,
     int32_t threshold_cm, int8_t direction);
+int Lateral_StartEncoder(uint8_t side);
 void Lateral_Step(void);
 void Lateral_Stop(void);
 lateral_state_t Lateral_State(void);

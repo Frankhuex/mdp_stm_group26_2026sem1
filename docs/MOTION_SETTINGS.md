@@ -137,3 +137,6 @@ CALIBRATE,CENTER forward/reverse and wheel synchronization use unscaled outputs.
 
 UNTILUS 正常路径现改用启动一次测距后的 GOCM 定长策略，因而不再使用 US 接近/末段速度与超声提前量；这些参数只作用于 FORWARD 开局无回波退化路径。正常路径所有运动 PWM 使用直行倍率。结束缓存写目标值，未实测停车后距离。
 Normal UNTILUS now uses fixed-distance GOCM and its drive scaling; US approach/final PWM and stop leads only apply to legacy FORWARD no-initial-echo fallback.
+
+GOCM 与正常定长 UNTILUS 使用按剩余距离的平滑减速：GOCM_DECEL_DISTANCE_CM=25 cm，短行程减速区最多占内部目标的 GOCM_DECEL_MAX_FRACTION=80%；S 型曲线下降到基础 GOCM_FINAL_PWM=1800，PWM 每秒变化上限 GOCM_PWM_SLEW_PER_SECOND=2500。上述仍乘直行倍率。旧 LONG_SLOWDOWN_START_REV 不再控制实际定长停车，仅用于尚未进入 IR 检测的连续门控直行段。目标编码器停车位置及电气制动 150 ms 保持，减速后实际停车精度需要实车复测。
+Fixed-distance GOCM and normal UNTILUS use a smoothstep remaining-distance ramp over up to 25 cm / 80% of target travel, ending at base PWM 1800 with 2500 PWM/s slew. Drive scaling remains. Gate-to-IR travel is continuous and retains its existing profile. Final encoder target and brake hold remain unchanged; hardware stopping accuracy needs revalidation.

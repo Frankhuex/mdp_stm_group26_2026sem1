@@ -431,3 +431,17 @@ LEFTIR,GET / RIGHTIR,GET 分别将有效距离缓存到 IRSensor_LeftLastGetCmX1
 启动时冻结缓存和结果，沿用 GOCM 速度、倍率、方向纠偏及距离补偿，保留毫米精度；计算结果须处于当前普通 GOCM 距离范围（MIN_COMMAND_DISTANCE_CM～MAX_COMMAND_DISTANCE_CM）。US 查询缓存无效、没有成功的 RISING 过程缓存或最后检测为 FALLING 时返回 ERR,CACHE_INVALID；无效总距离返回 ERR,BAD_VALUE，运动中返回 BUSY。该共享过程缓存会被下一条直行/IR 运动重置，新指令必须在缓存仍有效时使用；没有新增左右历史缓存。接受回报含 mode=US_IR_OFFSET、US/IR、offset_cm 和 target_mm；LOG,STRAIGHT,US_IR_OFFSET 记录计算项。可用于分号批次，例如 `STRAIGHT,RIGHTIR,RISING,50;US,GET;STRAIGHT,GOCM,US+IR+OFFSET,-10`。
 
 无前段距离的越沿侧移：`STRAIGHT,LEFTIR/RIGHTIR,RISING/FALLING,n,LATERAL`，也支持 `STRAIGHT,FORWARD/BACKWARD,LEFTIR/RIGHTIR,RISING/FALLING,n,LATERAL`。省略方向默认前进，起步即读取 IR，不需要 GOCM。沿用两阶段连续两次确认、RISING 最小值/FALLING 首阶段缓存，停车后加 10 cm 向对应侧执行前进侧移；BACKWARD 只作用于前段检测行驶。只有 RISING/FALLING 支持后缀，GT/LT 加 LATERAL 返回 BAD_ARGS。接受模式为 IR_LATERAL，最终只输出一次 DONE,LATERAL，STOP/失败阻止后续动作。原 GOCM 门控版本及距离范围保持。
+
+当前定长直行减速改为剩余距离 S 型曲线：GOCM 和正常 UNTILUS 最多提前 25 cm 开始，短距离减速区最多占内部目标行程 80%，逐渐降至基础 PWM 1800，并限制每秒 PWM 变化为 2500。参数位于 straight_tuning.h 的 GOCM_DECEL_DISTANCE_CM、GOCM_DECEL_MAX_FRACTION、GOCM_FINAL_PWM、GOCM_PWM_SLEW_PER_SECOND。这些 PWM 仍受直行倍率影响；最终编码器目标与 150 ms 制动不变。连续 GOCM→IR 的前段不使用终点减速，IR 检测低速及 FORWARD 无回波退化路径保持原策略。
+
+US+IR+OFFSET 兜底与实时诊断：US,GET 缓存缺失/无有效读数时，仅将公式中的 US 项替换为 600 mm（60 cm），总距离仍为 US + RISING 最小 IR + offset，不修改原查询缓存；IR 最小缓存无效仍拒绝。默认值参数为 straight_tuning.h 的 GOCM_US_IR_DEFAULT_US_MM。日志依次包含 LOG,STRAIGHT,US_IR_OFFSET,INPUT（US 来源/offset/方向）、CALC（US/IR/offset/总和/允许范围）、REJECT（缓存状态、越界或启动返回码）。FAST 每步输出 LOG,SEQ,STEP，具体 ERR 会额外以 LOG,REJECT,error=ERR,... 实时输出；不需运行中查询 SEQ,LOG，原 DONE,FAST 格式保持。
+
+数值型 LATERAL 命令成功启动后，也会把按实际取整转角计算的纵向位移的两倍存入 `Bypass_ForwardDistanceMm`。`LATERAL,LEFT/RIGHT,27` 对应 943 mm，并输出 `LOG,CACHE,BYPASS,source=LATERAL,...` 日志。
+
+SEARCHLATERAL 的备用动作数组支持数值型 `LATERAL,LEFT/RIGHT,n`，会等待两段转弯全部完成，并支持错误传递和 STOP 取消。
+
+`STRAIGHT,AUTO,UNTILUS,n,NOCACHE` 正常测量并移动，但保留已有 UNTILUS 首尾缓存，无有效回波或 STOP 时也不覆盖；不输出 UNTILUS 缓存写入日志。省略 NOCACHE 则保持原有缓存行为。
+
+普通 `STRAIGHT,[GOCM,n,]LEFTIR/RIGHTIR,GT/LT/RISING/FALLING,x` 成功停车时，将总行程缓存到 `Straight_IRTravelMm`（mm，两轮平均，包含 GOCM 前置距离及刹车移动）。倒车行程取正值。STOP、错误、带 LATERAL 的 IR 指令及 SEARCHLATERAL 搜索保留原缓存。`LATERAL,LEFT/RIGHT,ENCODER` 按缓存行程的一半加 35 cm 侧移（向上取整至 1 mm）；缓存缺失报 CACHE_INVALID，侧移超过 55 cm 报 BAD_VALUE。SEARCHLATERAL fallback 字符串数组也支持此命令。日志为 `LOG,CACHE,IR_TRAVEL,...` 和 `LOG,LATERAL,ENCODER,...`。
+
+SEARCHLATERAL 启动前采用加强的舵机回差定位：先到直行目标舵位减 260 μs（限制在左端点内），等待 100 ms，再回到直行目标舵位并等待 100 ms。可在 straight_tuning.h 调整 SEARCH_SERVO_BACKLASH_US、SEARCH_SERVO_PRE_HOLD_MS、SEARCH_SERVO_CENTER_HOLD_MS。LOG,SEARCHLATERAL,CENTER 输出两个舵位及等待时间。

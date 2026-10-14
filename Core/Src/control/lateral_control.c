@@ -1,4 +1,6 @@
 #include "control/lateral_control.h"
+#include "control/bypass_control.h"
+#include "control/motion_log.h"
 #include "control/straight_control.h"
 #include "control/turn_tuning.h"
 #include "sensors/ir_sensor.h"
@@ -48,6 +50,7 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     lc.side = side;
     lc.from_ir = from_ir;
     lc.from_edge = 0U;
+    lc.from_encoder = 0U;
     lc.stage = from_ir ? 0U : 1U;
     lc.initial_ir_cm_x10 = initial_ir;
     lc.distance_cm_x10 = distance_cm_x10;
@@ -55,8 +58,26 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     lc.start_rc = from_ir ? Straight_StartUntilIRGreaterValidCm(50, side) : StartArc(side);
     lc.straight_state = Straight_State();
     lc.turn_state = Turn_State();
+    if (!lc.start_rc && !from_ir) {
+        /* Two mirrored LATERAL moves have twice this arc pair's forward travel.
+         * Use the rounded commanded angle, matching BYPASS geometry. */
+        Bypass_ForwardDistanceMm = (uint32_t)lroundf(2.0f * sum_radius * 10.0f *
+            sinf(rounded * (3.14159265358979323846f / 180.0f)));
+        MotionLog_Write("CACHE,BYPASS,source=LATERAL,dir=%s,forward_mm=%lu",
+            side ? "RIGHT" : "LEFT", (unsigned long)Bypass_ForwardDistanceMm);
+    }
     lc.state = lc.start_rc == 0 ? LATERAL_RUNNING : LATERAL_START_ERROR;
     return lc.start_rc;
+}
+int Lateral_StartEncoder(uint8_t side)
+{
+    if (Straight_IRTravelMm == UINT32_MAX) return -5;
+    uint32_t displacement_mm = (Straight_IRTravelMm + 1U) / 2U + 350U;
+    MotionLog_Write("LATERAL,ENCODER,dir=%s,travel_mm=%lu,target_mm=%lu",
+        side ? "RIGHT" : "LEFT",(unsigned long)Straight_IRTravelMm,(unsigned long)displacement_mm);
+    int rc = Lateral_Start(side, 0U, displacement_mm);
+    if (!rc) lc.from_encoder = 1U;
+    return rc;
 }
 int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
                              straight_ir_comparison_t comparison, int32_t threshold_cm)
@@ -66,6 +87,7 @@ int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
     if (side > 1U || (comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING)) return -2;
     int rc = Straight_StartCmThenIR(distance_cm, side, comparison, threshold_cm);
     if (rc) return rc;
+    Straight_SetIRTravelCacheEnabled(0U);
     lateral_status_t empty = {0}; lc = empty;
     lc.side = side; lc.from_ir = lc.from_edge = 1U; lc.stage = 0U;
     lc.state = LATERAL_RUNNING; lc.straight_state = Straight_State();
@@ -80,6 +102,7 @@ int Lateral_StartOnIREdge(uint8_t side, straight_ir_comparison_t comparison,
     if (side > 1U || (comparison != STRAIGHT_IR_RISING && comparison != STRAIGHT_IR_FALLING)) return -2;
     int rc = Straight_StartUntilIRDirectionCm(threshold_cm,side,comparison,direction);
     if (rc) return rc;
+    Straight_SetIRTravelCacheEnabled(0U);
     lateral_status_t empty = {0}; lc = empty;
     lc.side = side; lc.from_ir = lc.from_edge = 1U; lc.stage = 0U;
     lc.state = LATERAL_RUNNING; lc.straight_state = Straight_State();

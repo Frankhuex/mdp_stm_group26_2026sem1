@@ -123,10 +123,12 @@ static const char *const fast_left1_commands[] =
     // "STRAIGHT,GOCM,-33",
 
     "LATERAL,LEFT,27",
-    "US,GET",
+    // "US,GET",
     "LATERAL,RIGHT,27",
+    // "BYPASS,LEFT,27",
     "STRAIGHT,AUTO,UNTILUS,32",
-    "STRAIGHT,AUTO,UNTILUS,32",
+    "STRAIGHT,AUTO,UNTILUS,32,NOCACHE",
+    // "GYRO,CALIB",
 };
 static const char *const fast_left2_commands[] =
 {
@@ -134,11 +136,14 @@ static const char *const fast_left2_commands[] =
     "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
     "STRAIGHT,RIGHTIR,GT,30",
     "TURN,RIGHT,R=35,A=180",
+    "GYRO,CALIB",
     "STRAIGHT,RIGHTIR,RISING,50",
+    // "GYRO,CALIB",
     "TURN,RIGHT,R=35,A=90",
-	// "SEARCHLATERAL,RIGHT,50,50",
-    "STRAIGHT,GOCM,US+IR+OFFSET,-25",
-    "STRAIGHT,RIGHTIR,RISING,50,LATERAL",
+    "GYRO,CALIB",
+	"SEARCHLATERAL,RIGHT,50,50",
+    // "STRAIGHT,GOCM,US+IR+OFFSET,-25",
+    // "STRAIGHT,RIGHTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,16",
 };
 static const char *const fast_right1_commands[] =
@@ -153,10 +158,12 @@ static const char *const fast_right1_commands[] =
     // "STRAIGHT,GOCM,-33",
 
     "LATERAL,RIGHT,27",
-    "US,GET",
+    // "US,GET",
     "LATERAL,LEFT,27",
+    // "BYPASS,RIGHT,27",
     "STRAIGHT,AUTO,UNTILUS,32",
-    "STRAIGHT,AUTO,UNTILUS,32",
+    "STRAIGHT,AUTO,UNTILUS,32,NOCACHE",
+    // "GYRO,CALIB",
 };
 static const char *const fast_right2_commands[] =
 {
@@ -164,11 +171,14 @@ static const char *const fast_right2_commands[] =
     "STRAIGHT,BACKWARD,LEFTIR,LT,30",
     "STRAIGHT,LEFTIR,GT,30",
     "TURN,LEFT,R=35,A=180",
+    "GYRO,CALIB",
     "STRAIGHT,LEFTIR,RISING,50",
+    // "GYRO,CALIB",
     "TURN,LEFT,R=35,A=90",
-	// "SEARCHLATERAL,LEFT,50,50",
-    "STRAIGHT,GOCM,US+IR+OFFSET,-25",
-    "STRAIGHT,LEFTIR,RISING,50,LATERAL",
+    "GYRO,CALIB",
+	"SEARCHLATERAL,LEFT,50,50", //
+    // "STRAIGHT,GOCM,US+IR+OFFSET,-25",
+    // "STRAIGHT,LEFTIR,RISING,50,LATERAL",
     "STRAIGHT,UNTILUS,16",
 };
 
@@ -246,6 +256,7 @@ static void Cmd_SendLine(const char *text)
 static void Cmd_Reject(const char *reason)
 {
     command_rejected = 1U;
+    MotionLog_Write("REJECT,error=%s",reason);
     Cmd_SendLine(reason);
 }
 
@@ -465,7 +476,7 @@ static void SendLateralStatus(uint8_t done)
     snprintf(msg, sizeof(msg),
         "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,ir_cm_x10=%lu,straight_state=%s,turn_state=%s,start_rc=%d\r\n",
         done ? "DONE," : "", LateralStateText(st.state), st.side ? "RIGHT" : "LEFT",
-        st.from_edge ? "EDGE_IR" : st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
+        st.from_encoder ? "ENCODER" : st.from_edge ? "EDGE_IR" : st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
         (unsigned long)(st.distance_cm_x10 % 10U), (long)st.angle_deg,
         (unsigned)st.stage, (unsigned long)st.initial_ir_cm_x10,
         StraightStateText(st.straight_state), TurnStateText(st.turn_state), st.start_rc);
@@ -1430,7 +1441,8 @@ static void DispatchLine(char *line)
         }
         else if ((tok1 && strcmp(tok1, "UNTILUS") == 0 && tok2 && tok3 == NULL) ||
                  (tok1 && (strcmp(tok1, "FORWARD") == 0 || strcmp(tok1, "BACKWARD") == 0 || strcmp(tok1, "AUTO") == 0) &&
-                  tok2 && strcmp(tok2, "UNTILUS") == 0 && tok3 && tok4 == NULL))
+                  tok2 && strcmp(tok2, "UNTILUS") == 0 && tok3 &&
+                  (tok4 == NULL || (!strcmp(tok1, "AUTO") && !strcmp(tok4, "NOCACHE") && tok5 == NULL))))
         {
             int32_t cm;
             int rc;
@@ -1448,7 +1460,7 @@ static void DispatchLine(char *line)
             }
             /* Compare directly with the sensor distance reported by US,GET,
              * in either direction; no installation offset is added. */
-            rc = direction == 0 ? Straight_StartUntilUltrasonicAutoCm(cm) : Straight_StartUntilUltrasonicDirectionCm(cm, direction);
+            rc = direction == 0 ? (tok4 ? Straight_StartUntilUltrasonicAutoNoCacheCm(cm) : Straight_StartUntilUltrasonicAutoCm(cm)) : Straight_StartUntilUltrasonicDirectionCm(cm, direction);
             if (rc == 0)
             {
                 char msg[96];
@@ -1630,18 +1642,19 @@ static void DispatchLine(char *line)
         {
             int32_t cm = 0;
             uint8_t from_ir = strcmp(tok2, "IR") == 0;
-            if (!from_ir && (!ParseIntStrict(tok2, &cm) || cm <= 0 ||
+            uint8_t from_encoder = strcmp(tok2, "ENCODER") == 0;
+            if (!from_ir && !from_encoder && (!ParseIntStrict(tok2, &cm) || cm <= 0 ||
                 cm > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM))
             { Cmd_Reject("ERR,BAD_VALUE"); return; }
             if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
-            int rc = Lateral_Start(strcmp(tok1, "RIGHT") == 0, from_ir, (uint32_t)cm * 10U);
+            int rc = from_encoder ? Lateral_StartEncoder(!strcmp(tok1, "RIGHT")) : Lateral_Start(strcmp(tok1, "RIGHT") == 0, from_ir, (uint32_t)cm * 10U);
             if (rc == 0)
             {
                 pending_motion = PENDING_MOTION_LATERAL;
                 Cmd_SendLine("OK,LATERAL");
                 SendLateralStatus(0U);
             }
-            else if (rc == -5) Cmd_Reject("ERR,IR_MEASUREMENT_INVALID");
+            else if (rc == -5) Cmd_Reject(from_encoder ? "ERR,CACHE_INVALID" : "ERR,IR_MEASUREMENT_INVALID");
             else if (rc == -2) Cmd_Reject("ERR,BAD_VALUE");
             else if (rc == -1) Cmd_Reject("ERR,NO_DEVICE");
             else if (rc == -4) Cmd_Reject("ERR,NOT_STILL");
@@ -2255,6 +2268,8 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
         else
         {
             uint8_t previous_output_suppressed = command_output_suppressed;
+            MotionLog_Write("SEQ,STEP,index=%lu,command=%s",(unsigned long)(index+1U),command);
+            FlushMotionLogs();
             SequenceLog_CaptureBefore(index + 1U, command);
             memcpy(line, command, length + 1U); /* strtok may mutate this copy. */
             command_rejected = 0U;
@@ -2264,6 +2279,7 @@ static const char *CommandInterface_RunSequenceRows(const char *const commands[]
             DispatchLine(line);
             sequence_row_dispatch = 0U;
             command_output_suppressed = previous_output_suppressed;
+            FlushMotionLogs();
             if (sequence_row_failure) { failure = sequence_row_failure; break; }
             if (command_rejected) { failure = "COMMAND_REJECTED"; break; }
             motion = pending_motion;

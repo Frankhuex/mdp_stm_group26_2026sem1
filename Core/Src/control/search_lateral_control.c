@@ -3,35 +3,35 @@
 #include "control/bypass_control.h"
 #include "control/lateral_control.h"
 #include "control/straight_tuning.h"
+#include "control/turn_tuning.h"
 #include <stdio.h>
 #include <string.h>
 static search_lateral_status_t sl;
+
+#define SEARCH_LATERAL_FALLBACK_OFFSET_MM -160
 /* Edit these actual command rows to change the fallback route.
  * RIGHT is used by FAST LEFT2; LEFT is used by FAST RIGHT2. */
 static const char *const search_right_fallback_commands[] = {
-    "STRAIGHT,RIGHTIR,GT,50",
-    "TURN,RIGHT,R=35,A=90",
-    "STRAIGHT,GOCM,-30",
-    "STRAIGHT,RIGHTIR,LT,50",
-    "STRAIGHT,GOCM,-20",
-    "TURN,LEFT,R=20,A=90",
+    // "TURN,RIGHT,R=35,A=90",
+    // "STRAIGHT,GOCM,-20",
+    // "TURN,LEFT,R=20,A=90",
+    "LATERAL,RIGHT,ENCODER",
 };
 static const char *const search_left_fallback_commands[] = {
-    "STRAIGHT,LEFTIR,GT,50",
-    "TURN,LEFT,R=20,A=90",
-    "STRAIGHT,GOCM,-30",
-    "STRAIGHT,LEFTIR,LT,50",
-    "STRAIGHT,GOCM,-35",
-    "TURN,RIGHT,R=35,A=90",
+    // "TURN,LEFT,R=20,A=90",
+    // "STRAIGHT,GOCM,-20",
+    // "TURN,RIGHT,R=35,A=90",
+    "LATERAL,LEFT,ENCODER",
 };
-static uint8_t fallback_child_is_turn;
+typedef enum { FALLBACK_STRAIGHT, FALLBACK_TURN, FALLBACK_LATERAL } fallback_child_t;
+static fallback_child_t fallback_child;
 static uint32_t FallbackCount(void)
 {
     return sl.side ? sizeof(search_right_fallback_commands)/sizeof(search_right_fallback_commands[0])
                    : sizeof(search_left_fallback_commands)/sizeof(search_left_fallback_commands[0]);
 }
 
-void SearchLateral_Init(void) { search_lateral_status_t empty = {0}; sl = empty; fallback_child_is_turn = 0; }
+void SearchLateral_Init(void) { search_lateral_status_t empty = {0}; sl = empty; fallback_child = FALLBACK_STRAIGHT; }
 search_lateral_state_t SearchLateral_State(void) { return sl.state; }
 void SearchLateral_Status(search_lateral_status_t *out) { if (out) *out = sl; }
 /* newlib-nano may omit long-long printf support; retain exact signed sums. */
@@ -52,8 +52,9 @@ int SearchLateral_Start(uint8_t side, int32_t gate_cm, int32_t threshold_cm)
     if (side > 1U || gate_cm < MIN_COMMAND_DISTANCE_CM || gate_cm > MAX_COMMAND_DISTANCE_CM ||
         threshold_cm < 10 || threshold_cm > (side ? 60 : 50)) return -2;
     int64_t limit = SEARCH_LATERAL_DEFAULT_LIMIT_MM;
-    const int32_t offset_mm = 900; /* Search-distance allowance, mm. */
-    int64_t sum = (int64_t)Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + offset_mm;
+    const int32_t offset_mm = SEARCH_LATERAL_FALLBACK_OFFSET_MM; /* Search-distance allowance, mm. */
+    // int64_t sum = (int64_t)Bypass_ForwardDistanceMm + Straight_AutoUSStartMm - Straight_ForwardUSEndMm + offset_mm;
+    int64_t sum = (int64_t)Bypass_ForwardDistanceMm + Straight_AutoUSStartMm + offset_mm;
     uint8_t caches_valid = Bypass_ForwardDistanceMm != UINT32_MAX && Straight_AutoUSStartMm != UINT32_MAX && Straight_ForwardUSEndMm != UINT32_MAX;
     uint8_t use_cache = caches_valid && sum > 0 && sum <= UINT32_MAX;
     if (use_cache) limit = sum;
@@ -83,20 +84,33 @@ static int StartFallback(void)
     const char *command = sl.side ? search_right_fallback_commands[index] : search_left_fallback_commands[index];
     char side[16], op[16]; int value, angle, end = 0;
     if (sscanf(command,"STRAIGHT,GOCM,%d%n",&value,&end)==1 && end && !command[end]) {
-        fallback_child_is_turn = 0;
+        fallback_child = FALLBACK_STRAIGHT;
         return Straight_StartCm(value);
+    }
+    end = 0;
+    if (sscanf(command,"LATERAL,%15[^,],ENCODER%n",side,&end)==1 && end && !command[end]) {
+        if (strcmp(side,"LEFT") && strcmp(side,"RIGHT")) return -2;
+        fallback_child = FALLBACK_LATERAL;
+        return Lateral_StartEncoder(!strcmp(side,"RIGHT"));
+    }
+    end = 0;
+    if (sscanf(command,"LATERAL,%15[^,],%d%n",side,&value,&end)==2 && end && !command[end]) {
+        if ((strcmp(side,"LEFT") && strcmp(side,"RIGHT")) || value <= 0 ||
+            value > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM) return -2;
+        fallback_child = FALLBACK_LATERAL;
+        return Lateral_Start(!strcmp(side,"RIGHT"), 0U, (uint32_t)value * 10U);
     }
     end = 0;
     if (sscanf(command,"TURN,%15[^,],R=%d,A=%d%n",side,&value,&angle,&end)==3 && end && !command[end]) {
         if (strcmp(side,"LEFT") && strcmp(side,"RIGHT")) return -2;
-        fallback_child_is_turn = 1;
+        fallback_child = FALLBACK_TURN;
         return Turn_StartRadiusAngle(value, angle, !strcmp(side,"RIGHT") ? 1 : -1);
     }
     end = 0;
     if (sscanf(command,"STRAIGHT,%15[^,],%15[^,],%d%n",side,op,&value,&end)==3 && end && !command[end]) {
         if (strcmp(side,"LEFTIR") && strcmp(side,"RIGHTIR")) return -2;
         uint8_t right = !strcmp(side,"RIGHTIR");
-        fallback_child_is_turn = 0;
+        fallback_child = FALLBACK_STRAIGHT;
         if (!strcmp(op,"GT")) return Straight_StartUntilIRGreaterValidCm(value,right);
         if (!strcmp(op,"LT")) return Straight_StartUntilIRCm(value,right,STRAIGHT_IR_LT);
         if (!strcmp(op,"RISING")) return Straight_StartUntilIRCm(value,right,STRAIGHT_IR_RISING);
@@ -133,7 +147,11 @@ void SearchLateral_Step(void)
         sl.state = state == LATERAL_DONE ? SEARCH_DONE : state == LATERAL_ABORTED ? SEARCH_ABORTED : SEARCH_LATERAL_ERROR;
         return;
     }
-    if (fallback_child_is_turn) {
+    if (fallback_child == FALLBACK_LATERAL) {
+        lateral_state_t state = Lateral_State();
+        if (state == LATERAL_RUNNING) return;
+        if (state != LATERAL_DONE) { sl.state = state == LATERAL_ABORTED ? SEARCH_ABORTED : SEARCH_LATERAL_ERROR; return; }
+    } else if (fallback_child == FALLBACK_TURN) {
         turn_state_t state = Turn_State();
         if (state == TURN_RUNNING) return;
         if (state != TURN_DONE) { sl.state = state == TURN_ABORTED ? SEARCH_ABORTED : SEARCH_TURN_ERROR; return; }
@@ -150,7 +168,7 @@ void SearchLateral_Stop(void)
 {
     if (sl.state != SEARCH_RUNNING) return;
     sl.state = SEARCH_ABORTED; /* Cancel before a completed child can launch another. */
-    if (sl.stage == 1) Lateral_Stop();
-    else if (sl.stage >= 2 && fallback_child_is_turn) Turn_Stop();
+    if (sl.stage == 1 || (sl.stage >= 2 && fallback_child == FALLBACK_LATERAL)) Lateral_Stop();
+    else if (sl.stage >= 2 && fallback_child == FALLBACK_TURN) Turn_Stop();
     else Straight_Stop();
 }

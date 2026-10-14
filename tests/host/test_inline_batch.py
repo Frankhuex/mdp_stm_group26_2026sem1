@@ -63,6 +63,7 @@ static void SequenceLog_Begin(void){sequence_log_active=1;}
 static void SequenceLog_CaptureBefore(uint32_t i,const char*c){(void)i;(void)c;}
 static void SequenceLog_CaptureAfter(uint32_t i,pending_motion_t m){(void)i;(void)m;}
 static void NotifyPendingMotionDone(void){if(!moving && pending_motion){Cmd_Send(fail_move?"DONE,STRAIGHT,state=SENSOR_ERROR\r\n":"DONE,STRAIGHT,state=DONE\r\n");pending_motion=PENDING_MOTION_NONE;}}
+static void MotionLog_Write(const char *format,...){(void)format;}
 static void FlushMotionLogs(void){}
 static void Sequence_StopMotors(void){moving=0;NotifyPendingMotionDone();}
 static int ParseIntStrict(const char*s,int32_t*n){char*end;long v=strtol(s,&end,10);if(!*s||*end)return 0;*n=v;return 1;}

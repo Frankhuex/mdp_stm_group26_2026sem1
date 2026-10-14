@@ -75,6 +75,12 @@
 #define LONG_BASE_PWM                   3300U
 #define LONG_SLOW_PWM                   2400U
 #define LONG_SLOWDOWN_START_REV         0.80f
+/* Remaining-distance smooth braking profile for actual fixed-distance moves. */
+#define GOCM_US_IR_DEFAULT_US_MM        600U /* Missing US GET: 60 cm input, not total distance. */
+#define GOCM_DECEL_DISTANCE_CM          30.0f
+#define GOCM_DECEL_MAX_FRACTION         0.90f
+#define GOCM_FINAL_PWM                  1780U
+#define GOCM_PWM_SLEW_PER_SECOND        2500U
 
 /* Left/right speed synchronization. Error is left-equivalent encoder counts
  * per CONTROL_PERIOD_MS, normalized by calibrated cm and measured dt.
@@ -171,6 +177,11 @@
 #define IR_COMMAND_CONFIRM_SAMPLES        2U
 #define IR_COMMAND_SAMPLE_MS             40U
 /* All active IR comparisons use low speed, including startup and gated entry. */
+/* Stronger two-position servo take-up before SEARCHLATERAL only. */
+#define SEARCH_SERVO_BACKLASH_US         260U
+#define SEARCH_SERVO_PRE_HOLD_MS         100U
+#define SEARCH_SERVO_CENTER_HOLD_MS      100U
+
 #define IR_COMMAND_DETECT_PWM            2700U
 #define IR_COMMAND_TIMEOUT_MS           30000U
 #define IR_COMMAND_MAX_TRAVEL_CM         200U

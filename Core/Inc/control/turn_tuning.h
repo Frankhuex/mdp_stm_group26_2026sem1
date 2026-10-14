@@ -100,7 +100,7 @@
  * Other angles/radii need validation. Reverse uses its own scale below. */
 /* 2026-10-04 instrumented: forward LEFT R20/A90 landed yaw_meas ~85.9 gyro at
  * scale 0.950 -> raise to 0.996 to land ~90 (trusting the gyro, no protractor). */
-#define TURN_LEFT_TARGET_SCALE           0.996f
+#define TURN_LEFT_TARGET_SCALE           0.9940f
 /* Reverse LEFT R20/A-90 trial: chassis heading was confirmed LEFT of start;
  * the rear midpoint being RIGHT was a separate position error. At scale
  * 0.963, target=87.93, progress=87.24 and route heading=+4.13 deg.
@@ -121,7 +121,7 @@
  * Reverse has its own trim after route-heading correction. */
 /* 2026-10-04 instrumented: forward RIGHT R35/A90 landed yaw_meas ~86.9 gyro at
  * scale 0.978 -> raise to 1.013 (0.978*90/86.9) to land ~90. */
-#define TURN_RIGHT_TARGET_SCALE          1.013f
+#define TURN_RIGHT_TARGET_SCALE          0.999f
 /* RIGHT return trial: nose reported ~0.5 cm RIGHT and rear midpoint 1.5 cm
  * forward of S. Treat the nose displacement as a small right heading error,
  * not a measured angle. Add 1.8% (~1.6 deg on a 90-deg local target); at
