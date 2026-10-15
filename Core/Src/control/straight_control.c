@@ -184,6 +184,9 @@ static uint8_t ReadIRStopCondition(void)
         {
             sc_ir_first_edge_cm_x10 = sc_ir_cm_x10;
             sc_ir_first_edge_valid = 1U;
+            MotionLog_Write("IR,RISING_MIN,side=%s,min_mm=%lu,current_mm=%lu,threshold_cm=%ld,armed=%u",
+                sc_ir_mode == 1U ? "LEFT" : "RIGHT",(unsigned long)sc_ir_first_edge_cm_x10,
+                (unsigned long)sc_ir_cm_x10,(long)sc_ir_threshold_cm,(unsigned)sc_ir_edge_armed);
         }
         if (!qualifies)
         {
@@ -204,8 +207,15 @@ static uint8_t ReadIRStopCondition(void)
         {
             sc_ir_edge_armed = 1U;
             sc_ir_confirm_count = 0U;
+            MotionLog_Write("IR,EDGE_ARMED,side=%s,op=%s,threshold_cm=%ld,first_mm=%lu,valid=%u",
+                sc_ir_mode == 1U ? "LEFT" : "RIGHT",rising ? "RISING" : "FALLING",
+                (long)sc_ir_threshold_cm,(unsigned long)sc_ir_first_edge_cm_x10,(unsigned)sc_ir_first_edge_valid);
             return 0U;
         }
+        MotionLog_Write("IR,EDGE_CONFIRMED,side=%s,op=%s,threshold_cm=%ld,first_mm=%lu,valid=%u,last_mm=%lu,range=%d,confirm=%u",
+            sc_ir_mode == 1U ? "LEFT" : "RIGHT",rising ? "RISING" : "FALLING",(long)sc_ir_threshold_cm,
+            (unsigned long)sc_ir_first_edge_cm_x10,(unsigned)sc_ir_first_edge_valid,
+            (unsigned long)sc_ir_cm_x10,(int)status,(unsigned)sc_ir_confirm_count);
         return 1U;
     }
     uint8_t qualifies;
@@ -403,7 +413,11 @@ static uint32_t SmoothDistancePWM(float dt_sec)
     if(progress>1) progress=1;
     float smooth=progress*progress*(3.0f-2.0f*progress);
     uint32_t cruise=sc_profile==STRAIGHT_PROFILE_SHORT ? SHORT_RAMP_PEAK_PWM : LONG_BASE_PWM;
-    uint32_t desired=(uint32_t)(GOCM_FINAL_PWM + (cruise-GOCM_FINAL_PWM)*smooth + 0.5f);
+    /* Motor output applies the straight multiplier later. Convert the fixed
+     * physical endpoint back to controller units so it is not multiplied too. */
+    float final_base = (float)GOCM_FINAL_PWM * 100.0f / STRAIGHT_SPEED_SCALE_PERCENT;
+    if (final_base > cruise) final_base = (float)cruise;
+    uint32_t desired=(uint32_t)(final_base + ((float)cruise-final_base)*smooth + 0.5f);
     uint32_t step=(uint32_t)(GOCM_PWM_SLEW_PER_SECOND*dt_sec+0.5f);
     if(!step) step=1;
     if(sc_gocm_base_pwm>desired) {
@@ -716,6 +730,29 @@ static int Straight_StartCmInternal(int32_t target_cm, uint8_t ir_mode,
 int Straight_StartCm(int32_t target_cm)
 {
     return Straight_StartCmInternal(target_cm, 0U, 0, STRAIGHT_IR_GT, 0U, 0U, 0, 0U);
+}
+
+int Straight_StartForwardMm(uint32_t distance_mm)
+{
+    if (!distance_mm || distance_mm > MAX_COMMAND_DISTANCE_CM * 10U) return -2;
+    int32_t seed = (int32_t)((distance_mm + 9U) / 10U);
+    if (seed < MIN_COMMAND_DISTANCE_CM) seed = MIN_COMMAND_DISTANCE_CM;
+    int rc = Straight_StartCm(seed);
+    if (rc) return rc;
+    float cm = distance_mm / 10.0f;
+    sc_profile = cm <= SHORT_PROFILE_MAX_CM ? STRAIGHT_PROFILE_SHORT : STRAIGHT_PROFILE_LONG;
+    float revolutions;
+    if (sc_profile == STRAIGHT_PROFILE_SHORT) {
+        float calibrated = cm + SHORT_CALIBRATION_OFFSET_CM - SHORT_FORWARD_OVERSHOOT_COMP_CM + GOCM_BRAKE_DELAY_CM;
+        if (calibrated <= 0.0f) calibrated = cm;
+        revolutions = calibrated / WHEEL_CIRCUMFERENCE_CM;
+    } else {
+        revolutions = cm / WHEEL_CIRCUMFERENCE_CM - LONG_FORWARD_REV_ERROR_COMPENSATION
+            + GOCM_BRAKE_DELAY_CM / WHEEL_CIRCUMFERENCE_CM;
+    }
+    sc_target_left_counts = revolutions * LEFT_COUNTS_PER_REV;
+    sc_target_right_counts = revolutions * RIGHT_COUNTS_PER_REV;
+    return 0;
 }
 
 int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,

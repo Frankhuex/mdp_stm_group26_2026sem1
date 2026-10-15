@@ -3,8 +3,11 @@
 #include "control/motion_log.h"
 #include "control/straight_control.h"
 #include "control/turn_tuning.h"
+#include "control/straight_tuning.h"
 #include "sensors/ir_sensor.h"
 #include <math.h>
+
+#define LATERAL_ENCODER_OFFSET_MM 300U
 
 static lateral_status_t lc;
 
@@ -12,14 +15,14 @@ static int StartArc(uint8_t side)
 {
     /* Existing TURN convention: -1=LEFT, +1=RIGHT; positive angle=forward. */
     return Turn_StartRadiusAngle(side ? CMD_RIGHT_MIN_RADIUS_CM : CMD_LEFT_SOFT_MIN_RADIUS_CM,
-                                 lc.angle_deg, side ? 1 : -1);
+                                 lc.angle_deg + (lc.stage == 1U ? lc.first_angle_offset_deg : 0), side ? 1 : -1);
 }
 void Lateral_Init(void)
 {
     lateral_status_t empty = {0};
     lc = empty;
 }
-int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
+static int StartWithOffset(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10, int32_t first_offset)
 {
     if (lc.state == LATERAL_RUNNING || Straight_State() == STRAIGHT_RUNNING ||
         Turn_State() == TURN_RUNNING) return -3;
@@ -42,11 +45,16 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
         distance_cm_x10 += offset;
     }
     float sum_radius = (float)(CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM);
-    if (distance_cm_x10 == 0U || (float)distance_cm_x10 > sum_radius * 10.0f) return -2;
-    float angle = acosf(1.0f - (float)distance_cm_x10 / (10.0f * sum_radius)) *
+    uint32_t arc_limit_mm = (uint32_t)sum_radius * 10U;
+    if (distance_cm_x10 == 0U || distance_cm_x10 > arc_limit_mm + MAX_COMMAND_DISTANCE_CM * 10U) return -2;
+    uint32_t arc_mm = distance_cm_x10 > arc_limit_mm ? arc_limit_mm : distance_cm_x10;
+    float angle = acosf(1.0f - (float)arc_mm / (10.0f * sum_radius)) *
                   (180.0f / 3.14159265358979323846f);
     int32_t rounded = (int32_t)lroundf(angle);
     if (rounded < CMD_MIN_ANGLE_DEG || rounded > 90 || rounded > CMD_MAX_ANGLE_DEG) return -2;
+    int64_t first_angle = (int64_t)rounded + first_offset;
+    if (first_angle < CMD_MIN_ANGLE_DEG || first_angle > CMD_MAX_ANGLE_DEG) return -2;
+    lc.first_angle_offset_deg = first_offset;
     lc.side = side;
     lc.from_ir = from_ir;
     lc.from_edge = 0U;
@@ -54,7 +62,11 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     lc.stage = from_ir ? 0U : 1U;
     lc.initial_ir_cm_x10 = initial_ir;
     lc.distance_cm_x10 = distance_cm_x10;
+    lc.middle_mm = distance_cm_x10 - arc_mm;
     lc.angle_deg = rounded;
+    MotionLog_Write("LATERAL,PLAN,dir=%s,target_mm=%lu,first_deg=%ld,middle_mm=%lu,second_deg=%ld",
+        side ? "RIGHT" : "LEFT",(unsigned long)distance_cm_x10,(long)(rounded+first_offset),
+        (unsigned long)lc.middle_mm,(long)rounded);
     lc.start_rc = from_ir ? Straight_StartUntilIRGreaterValidCm(50, side) : StartArc(side);
     lc.straight_state = Straight_State();
     lc.turn_state = Turn_State();
@@ -69,13 +81,21 @@ int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
     lc.state = lc.start_rc == 0 ? LATERAL_RUNNING : LATERAL_START_ERROR;
     return lc.start_rc;
 }
+int Lateral_Start(uint8_t side, uint8_t from_ir, uint32_t distance_cm_x10)
+{
+    return StartWithOffset(side, from_ir, distance_cm_x10, 0);
+}
 int Lateral_StartEncoder(uint8_t side)
 {
+    return Lateral_StartEncoderOffset(side, 0);
+}
+int Lateral_StartEncoderOffset(uint8_t side, int32_t first_angle_offset_deg)
+{
     if (Straight_IRTravelMm == UINT32_MAX) return -5;
-    uint32_t displacement_mm = (Straight_IRTravelMm + 1U) / 2U + 350U;
-    MotionLog_Write("LATERAL,ENCODER,dir=%s,travel_mm=%lu,target_mm=%lu",
-        side ? "RIGHT" : "LEFT",(unsigned long)Straight_IRTravelMm,(unsigned long)displacement_mm);
-    int rc = Lateral_Start(side, 0U, displacement_mm);
+    uint32_t displacement_mm = (Straight_IRTravelMm + 1U) / 2U + LATERAL_ENCODER_OFFSET_MM;
+    MotionLog_Write("LATERAL,ENCODER,dir=%s,travel_mm=%lu,target_mm=%lu,first_offset_deg=%ld",
+        side ? "RIGHT" : "LEFT",(unsigned long)Straight_IRTravelMm,(unsigned long)displacement_mm,(long)first_angle_offset_deg);
+    int rc = StartWithOffset(side, 0U, displacement_mm, first_angle_offset_deg);
     if (!rc) lc.from_encoder = 1U;
     return rc;
 }
@@ -130,11 +150,13 @@ void Lateral_Step(void)
         }
         if (lc.from_edge) {
             float sum = CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM;
-            if (!lc.initial_ir_cm_x10 || !lc.distance_cm_x10 || lc.distance_cm_x10 > sum * 10.0f) {
+            if (!lc.initial_ir_cm_x10 || !lc.distance_cm_x10 || lc.distance_cm_x10 > sum * 10.0f + MAX_COMMAND_DISTANCE_CM * 10U) {
                 lc.start_rc = lc.initial_ir_cm_x10 ? -2 : -5;
                 lc.state = LATERAL_START_ERROR; return;
             }
-            lc.angle_deg = (int32_t)lroundf(acosf(1.0f - lc.distance_cm_x10 / (sum * 10.0f)) *
+            uint32_t arc_mm = lc.distance_cm_x10 > sum * 10.0f ? (uint32_t)sum * 10U : lc.distance_cm_x10;
+            lc.middle_mm = lc.distance_cm_x10 - arc_mm;
+            lc.angle_deg = (int32_t)lroundf(acosf(1.0f - arc_mm / (sum * 10.0f)) *
                 (180.0f / 3.14159265358979323846f));
             if (lc.angle_deg < CMD_MIN_ANGLE_DEG || lc.angle_deg > 90) {
                 lc.start_rc = -2; lc.state = LATERAL_START_ERROR; return;
@@ -146,6 +168,19 @@ void Lateral_Step(void)
         if (lc.start_rc != 0) lc.state = LATERAL_START_ERROR;
         return;
     }
+    if (lc.stage == 3U) {
+        lc.straight_state = Straight_State();
+        if (lc.straight_state == STRAIGHT_RUNNING) return;
+        if (lc.straight_state != STRAIGHT_DONE) {
+            lc.state = lc.straight_state == STRAIGHT_ABORTED ? LATERAL_ABORTED : LATERAL_STRAIGHT_ERROR;
+            return;
+        }
+        lc.stage = 2U;
+        lc.start_rc = StartArc(!lc.side);
+        lc.turn_state = Turn_State();
+        if (lc.start_rc) lc.state = LATERAL_START_ERROR;
+        return;
+    }
     lc.turn_state = Turn_State();
     if (lc.turn_state == TURN_RUNNING) return;
     if (lc.turn_state != TURN_DONE)
@@ -154,6 +189,15 @@ void Lateral_Step(void)
         return;
     }
     if (lc.stage == 2U) { lc.state = LATERAL_DONE; return; }
+    if (lc.middle_mm) {
+        lc.stage = 3U;
+        lc.start_rc = Straight_StartForwardMm(lc.middle_mm);
+        lc.straight_state = Straight_State();
+        MotionLog_Write("LATERAL,MIDDLE,dir=%s,distance_mm=%lu,start_rc=%d",
+            lc.side ? "RIGHT" : "LEFT",(unsigned long)lc.middle_mm,lc.start_rc);
+        if (lc.start_rc) lc.state = LATERAL_START_ERROR;
+        return;
+    }
     lc.stage = 2U;
     lc.start_rc = StartArc(!lc.side);
     lc.turn_state = Turn_State();
@@ -164,7 +208,7 @@ void Lateral_Stop(void)
     if (lc.state != LATERAL_RUNNING) return;
     /* Cancel the composite first so a completed first arc cannot launch arc 2. */
     lc.state = LATERAL_ABORTED;
-    if (lc.stage == 0U) Straight_Stop();
+    if (lc.stage == 0U || lc.stage == 3U) Straight_Stop();
     else Turn_Stop();
     lc.straight_state = Straight_State();
     lc.turn_state = Turn_State();

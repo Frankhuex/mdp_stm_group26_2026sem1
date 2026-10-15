@@ -13,7 +13,8 @@ int main(void)
             if(current<previous) reductions++;
             /* Per 40ms control interval: at most 100 base PWM, plus rounding. */
             assert(current+102U>=previous);
-            if(current<=GOCM_FINAL_PWM+20U) saw_final=1;
+            uint32_t actual=(current*STRAIGHT_SPEED_SCALE_PERCENT+50U)/100U;
+            if(actual<=GOCM_FINAL_PWM+30U) saw_final=1;
             previous=current;
         }
         encoder_delta=0;

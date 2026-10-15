@@ -27,6 +27,12 @@ static turn_state_t turn;
 static straight_state_t straight;
 static int calls, fail_call, fail_rc;
 static int straight_calls, straight_rc;
+static uint32_t middle_distance_mm;
+int Straight_StartForwardMm(uint32_t mm) {
+    middle_distance_mm=mm; straight_calls++;
+    if(straight_rc) return straight_rc;
+    straight=STRAIGHT_RUNNING;return 0;
+}
 static uint8_t approach_side;
 int Straight_StartUntilIRGreaterValidCm(int32_t threshold, uint8_t side)
 {
@@ -53,7 +59,7 @@ static void reset(void)
 {
     Lateral_Init(); turn = TURN_IDLE; straight = STRAIGHT_IDLE;
     calls = fail_call = 0; fail_rc = -1;
-    straight_calls = straight_rc = 0;
+    straight_calls = straight_rc = 0; middle_distance_mm=0;
     IRSensorDistanceReading empty = {0};
     ir = empty;
     ir.left_status = ir.right_status = IR_RANGE_ERROR;
@@ -111,7 +117,8 @@ int main(void)
     }
     reset(); assert(Lateral_Start(0, 1, 0) == -5 && calls == 0);
     ir.left_status = IR_RANGE_VALID; ir.left_cm_x10 = 451;
-    assert(Lateral_Start(0, 1, 0) == -2 && calls == 0);
+    assert(Lateral_Start(0, 1, 0) == 0 && status().middle_mm == 1 && calls == 0);
+    Lateral_Stop(); reset(); ir.left_status=IR_RANGE_VALID;
     ir.left_cm_x10 = 450;
     assert(Lateral_Start(0, 1, 0) == 0 && status().angle_deg == 90);
     for (uint8_t side = 0; side < 2; side++)
@@ -155,7 +162,7 @@ int main(void)
     assert(Lateral_Start(2, 0, 300) == -2);
     assert(Lateral_Start(0, 2, 300) == -2);
     assert(Lateral_Start(0, 0, 0) == -2);
-    assert(Lateral_Start(0, 0, 551) == -2);
+    assert(Lateral_Start(0, 0, 2651) == -2);
     assert(Lateral_Start(0, 0, UINT32_MAX) == -2 && calls == 0);
     assert(Lateral_Start(1, 0, 10) == 0 && status().distance_cm_x10 == 10); /* n=1 cm */
     reset(); straight = STRAIGHT_RUNNING;
@@ -180,4 +187,5 @@ int main(void)
     turn = TURN_DONE; Lateral_Step(); Lateral_Stop(); Lateral_Step();
     assert(Lateral_State() == LATERAL_ABORTED && calls == 2 && turn == TURN_ABORTED);
     puts("PASS: lateral geometry, both directions/modes, IR snapshot, approach-before-arcs, approach errors/STOP, bounds, busy, both-stage STOP and faults");
+    return 0;
 }

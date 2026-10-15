@@ -121,7 +121,7 @@
  * Reverse has its own trim after route-heading correction. */
 /* 2026-10-04 instrumented: forward RIGHT R35/A90 landed yaw_meas ~86.9 gyro at
  * scale 0.978 -> raise to 1.013 (0.978*90/86.9) to land ~90. */
-#define TURN_RIGHT_TARGET_SCALE          0.999f
+#define TURN_RIGHT_TARGET_SCALE          1.002f
 /* RIGHT return trial: nose reported ~0.5 cm RIGHT and rear midpoint 1.5 cm
  * forward of S. Treat the nose displacement as a small right heading error,
  * not a measured angle. Add 1.8% (~1.6 deg on a 90-deg local target); at

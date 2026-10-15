@@ -14,10 +14,12 @@ typedef struct {
     uint8_t from_ir;
     uint8_t from_edge;
     uint8_t from_encoder;
-    uint8_t stage; /* 0=IR approach, 1/2=turn arcs; retained on failure */
+    uint8_t stage; /* 0=IR approach, 1/2=turn arcs, 3=middle straight; retained on failure */
     uint32_t initial_ir_cm_x10;
     uint32_t distance_cm_x10;
-    int32_t angle_deg; /* rounded command angle, equal for both arcs */
+    uint32_t middle_mm;
+    int32_t angle_deg; /* rounded nominal angle */
+    int32_t first_angle_offset_deg; /* ENCODER: applied only to arc 1 */
     int start_rc;
     turn_state_t turn_state;
     straight_state_t straight_state;
@@ -34,6 +36,7 @@ int Lateral_StartAfterIREdge(int32_t distance_cm, uint8_t side,
 int Lateral_StartOnIREdge(uint8_t side, straight_ir_comparison_t comparison,
     int32_t threshold_cm, int8_t direction);
 int Lateral_StartEncoder(uint8_t side);
+int Lateral_StartEncoderOffset(uint8_t side, int32_t first_angle_offset_deg);
 void Lateral_Step(void);
 void Lateral_Stop(void);
 lateral_state_t Lateral_State(void);

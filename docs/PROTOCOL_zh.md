@@ -445,3 +445,11 @@ SEARCHLATERAL 的备用动作数组支持数值型 `LATERAL,LEFT/RIGHT,n`，会�
 普通 `STRAIGHT,[GOCM,n,]LEFTIR/RIGHTIR,GT/LT/RISING/FALLING,x` 成功停车时，将总行程缓存到 `Straight_IRTravelMm`（mm，两轮平均，包含 GOCM 前置距离及刹车移动）。倒车行程取正值。STOP、错误、带 LATERAL 的 IR 指令及 SEARCHLATERAL 搜索保留原缓存。`LATERAL,LEFT/RIGHT,ENCODER` 按缓存行程的一半加 35 cm 侧移（向上取整至 1 mm）；缓存缺失报 CACHE_INVALID，侧移超过 55 cm 报 BAD_VALUE。SEARCHLATERAL fallback 字符串数组也支持此命令。日志为 `LOG,CACHE,IR_TRAVEL,...` 和 `LOG,LATERAL,ENCODER,...`。
 
 SEARCHLATERAL 启动前采用加强的舵机回差定位：先到直行目标舵位减 260 μs（限制在左端点内），等待 100 ms，再回到直行目标舵位并等待 100 ms。可在 straight_tuning.h 调整 SEARCH_SERVO_BACKLASH_US、SEARCH_SERVO_PRE_HOLD_MS、SEARCH_SERVO_CENTER_HOLD_MS。LOG,SEARCHLATERAL,CENTER 输出两个舵位及等待时间。
+
+GOCM_FINAL_PWM 现表示不受 STRAIGHT_SPEED_SCALE_PERCENT 放大的实际末端基础输出，默认 1800。巡航速度仍应用倍率；曲线通过抵消驱动层倍率平滑降至固定末端值。若巡航实际输出已低于该值，则保持较低速度，不额外加速。定长模式 UNTILUS 共用此行为。整数取整和轮速同步会使各轮实际值略有差异，变化速率限制也可能延后到达末端值。
+
+`LATERAL,LEFT/RIGHT,ENCODER,n` 可选有符号整数 n 度，仅给第一段转弯加 n，第二段保持原计算角度；省略 n 等同于 0。调整后的第一段须在 5～360 度内，超出时启动前拒绝。SEARCHLATERAL fallback 数组支持相同格式，状态和日志提供 first_offset_deg。两段角度不等会改变最终朝向及实际侧移，侧移计算及既有 BYPASS 距离缓存仍基于原始几何。
+
+实时 IR 日志：每次出现更小有效值输出 LOG,IR,RISING_MIN（min_mm），第一阶段连续确认后输出 EDGE_ARMED，第二阶段确认后输出 EDGE_CONFIRMED。first_mm 对 RISING 表示最小值，对 FALLING 表示第一阶段样本；valid=0 表示无可用有限值，FAR 时 last_mm=4294967295 表示超量程。SEARCHLATERAL 正常侧移路径输出 EDGE（ir_min_mm、补偿、侧移目标、两轮行程）、LATERAL_START（返回码及计算转角，失败时 angle_valid=0）、LATERAL_END（结果及子动作状态）。FAST 中也实时输出这些 LOG，无需查询 SEG,LOG。
+
+LATERAL 已支持超过 55 cm 的侧移：第一段转 90°，中间按 GOCM 方式前进“侧移距离−55 cm”，再反向转 90°。数值、IR、越沿和 ENCODER 模式及 SEARCHLATERAL fallback 均支持。ENCODER 第一段角度偏移仍叠加，非零偏移会改变实际几何。中间直行保留毫米精度并采用现有 GOCM 校准和制动，状态 stage=3；STOP 取消当前子动作，中间错误终止序列。当前最大侧移为 265 cm（55 cm 加 GOCM 上限 210 cm）。PLAN、MIDDLE 日志输出计划和中间启动结果。

@@ -109,7 +109,7 @@ static const char *const loop_once_commands[] =
  * Each route uses the normal parser/controllers, as LOOP,ONCE does. */
 static const char *const fast_approach_commands[] =
 {
-    "STRAIGHT,UNTILUS,32",
+    "STRAIGHT,UNTILUS,28",
 };
 static const char *const fast_left1_commands[] =
 {
@@ -136,11 +136,11 @@ static const char *const fast_left2_commands[] =
     "STRAIGHT,BACKWARD,RIGHTIR,LT,30",
     "STRAIGHT,RIGHTIR,GT,30",
     "TURN,RIGHT,R=35,A=180",
-    "GYRO,CALIB",
+    // "GYRO,CALIB",
     "STRAIGHT,RIGHTIR,RISING,50",
     // "GYRO,CALIB",
     "TURN,RIGHT,R=35,A=90",
-    "GYRO,CALIB",
+    // "GYRO,CALIB",
 	"SEARCHLATERAL,RIGHT,50,50",
     // "STRAIGHT,GOCM,US+IR+OFFSET,-25",
     // "STRAIGHT,RIGHTIR,RISING,50,LATERAL",
@@ -171,11 +171,11 @@ static const char *const fast_right2_commands[] =
     "STRAIGHT,BACKWARD,LEFTIR,LT,30",
     "STRAIGHT,LEFTIR,GT,30",
     "TURN,LEFT,R=35,A=180",
-    "GYRO,CALIB",
+    // "GYRO,CALIB",
     "STRAIGHT,LEFTIR,RISING,50",
     // "GYRO,CALIB",
     "TURN,LEFT,R=35,A=90",
-    "GYRO,CALIB",
+    // "GYRO,CALIB",
 	"SEARCHLATERAL,LEFT,50,50", //
     // "STRAIGHT,GOCM,US+IR+OFFSET,-25",
     // "STRAIGHT,LEFTIR,RISING,50,LATERAL",
@@ -474,11 +474,11 @@ static void SendLateralStatus(uint8_t done)
     char msg[256];
     Lateral_Status(&st);
     snprintf(msg, sizeof(msg),
-        "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,stage=%u,ir_cm_x10=%lu,straight_state=%s,turn_state=%s,start_rc=%d\r\n",
+        "%sLATERAL,state=%s,dir=%s,source=%s,d_cm=%lu.%lu,a=%ld,first_offset_deg=%ld,middle_mm=%lu,stage=%u,ir_cm_x10=%lu,straight_state=%s,turn_state=%s,start_rc=%d\r\n",
         done ? "DONE," : "", LateralStateText(st.state), st.side ? "RIGHT" : "LEFT",
         st.from_encoder ? "ENCODER" : st.from_edge ? "EDGE_IR" : st.from_ir ? "IR" : "CM", (unsigned long)(st.distance_cm_x10 / 10U),
         (unsigned long)(st.distance_cm_x10 % 10U), (long)st.angle_deg,
-        (unsigned)st.stage, (unsigned long)st.initial_ir_cm_x10,
+        (long)st.first_angle_offset_deg, (unsigned long)st.middle_mm, (unsigned)st.stage, (unsigned long)st.initial_ir_cm_x10,
         StraightStateText(st.straight_state), TurnStateText(st.turn_state), st.start_rc);
     Cmd_Send(msg);
 }
@@ -1638,16 +1638,17 @@ static void DispatchLine(char *line)
             Cmd_SendLine("OK");
         }
         else if (tok1 && (strcmp(tok1, "LEFT") == 0 || strcmp(tok1, "RIGHT") == 0) &&
-                 tok2 && tok3 == NULL)
+                 tok2 && (tok3 == NULL || (!strcmp(tok2, "ENCODER") && tok4 == NULL)))
         {
-            int32_t cm = 0;
+            int32_t cm = 0, first_offset = 0;
+            if (tok3 && !ParseIntStrict(tok3, &first_offset)) { Cmd_Reject("ERR,BAD_ARGS"); return; }
             uint8_t from_ir = strcmp(tok2, "IR") == 0;
             uint8_t from_encoder = strcmp(tok2, "ENCODER") == 0;
             if (!from_ir && !from_encoder && (!ParseIntStrict(tok2, &cm) || cm <= 0 ||
-                cm > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM))
+                cm > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM + MAX_COMMAND_DISTANCE_CM))
             { Cmd_Reject("ERR,BAD_VALUE"); return; }
             if (AnyMotionRunning()) { Cmd_Reject("ERR,BUSY"); return; }
-            int rc = from_encoder ? Lateral_StartEncoder(!strcmp(tok1, "RIGHT")) : Lateral_Start(strcmp(tok1, "RIGHT") == 0, from_ir, (uint32_t)cm * 10U);
+            int rc = from_encoder ? Lateral_StartEncoderOffset(!strcmp(tok1, "RIGHT"), first_offset) : Lateral_Start(strcmp(tok1, "RIGHT") == 0, from_ir, (uint32_t)cm * 10U);
             if (rc == 0)
             {
                 pending_motion = PENDING_MOTION_LATERAL;

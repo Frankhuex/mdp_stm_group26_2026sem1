@@ -21,6 +21,8 @@ void Straight_Init(void);
 /* Holds the route's planned chassis heading in either gear. The shared
  * motion_heading module preserves error across straight and turn commands. */
 int Straight_StartCm(int32_t target_cm);
+/* Forward GOCM behavior with millimetre precision, including sub-10cm moves. */
+int Straight_StartForwardMm(uint32_t distance_mm);
 /* Freeze US,GET + current successful shared RISING minimum + offset (cm).
  * Optional outputs are mm. -5 means unavailable cache; -2 invalid sum. */
 int Straight_StartFromUsIR(int32_t offset_cm, int8_t direction,

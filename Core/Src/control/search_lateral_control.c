@@ -88,6 +88,12 @@ static int StartFallback(void)
         return Straight_StartCm(value);
     }
     end = 0;
+    if (sscanf(command,"LATERAL,%15[^,],ENCODER,%d%n",side,&value,&end)==2 && end && !command[end]) {
+        if (strcmp(side,"LEFT") && strcmp(side,"RIGHT")) return -2;
+        fallback_child = FALLBACK_LATERAL;
+        return Lateral_StartEncoderOffset(!strcmp(side,"RIGHT"), value);
+    }
+    end = 0;
     if (sscanf(command,"LATERAL,%15[^,],ENCODER%n",side,&end)==1 && end && !command[end]) {
         if (strcmp(side,"LEFT") && strcmp(side,"RIGHT")) return -2;
         fallback_child = FALLBACK_LATERAL;
@@ -96,7 +102,7 @@ static int StartFallback(void)
     end = 0;
     if (sscanf(command,"LATERAL,%15[^,],%d%n",side,&value,&end)==2 && end && !command[end]) {
         if ((strcmp(side,"LEFT") && strcmp(side,"RIGHT")) || value <= 0 ||
-            value > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM) return -2;
+            value > CMD_LEFT_SOFT_MIN_RADIUS_CM + CMD_RIGHT_MIN_RADIUS_CM + MAX_COMMAND_DISTANCE_CM) return -2;
         fallback_child = FALLBACK_LATERAL;
         return Lateral_Start(!strcmp(side,"RIGHT"), 0U, (uint32_t)value * 10U);
     }
@@ -131,11 +137,25 @@ void SearchLateral_Step(void)
                 (unsigned long)(left*10.0f+0.5f),(unsigned long)(right*10.0f+0.5f));
             sl.fallback = 1; sl.stage = 2; sl.start_rc = StartFallback();
         } else if (state == STRAIGHT_DONE) {
-            if (!Straight_IRFirstEdgeReading(&sl.ir_cm_x10)) sl.start_rc = -5;
-            else {
+            float left, right; Straight_Status(0,0,&left,&right,0,0);
+            if (!Straight_IRFirstEdgeReading(&sl.ir_cm_x10)) {
+                sl.start_rc = -5;
+                MotionLog_Write("SEARCHLATERAL,EDGE_ERROR,dir=%s,reason=IR_CACHE_INVALID,start_rc=-5",
+                    sl.side ? "RIGHT" : "LEFT");
+            } else {
+                uint32_t offset = LATERAL_OBSTACLE_WIDTH_CM * 5U + LATERAL_IR_TO_CENTER_CM * 10U;
+                uint32_t target = sl.ir_cm_x10 + offset;
+                MotionLog_Write("SEARCHLATERAL,EDGE,dir=%s,threshold_cm=%ld,ir_min_mm=%lu,offset_mm=%lu,target_mm=%lu,left_mm=%lu,right_mm=%lu",
+                    sl.side ? "RIGHT" : "LEFT",(long)sl.threshold_cm,(unsigned long)sl.ir_cm_x10,
+                    (unsigned long)offset,(unsigned long)target,
+                    (unsigned long)(left*10.0f+0.5f),(unsigned long)(right*10.0f+0.5f));
                 sl.stage = 1;
-                sl.start_rc = Lateral_Start(sl.side, 0, sl.ir_cm_x10 +
-                    LATERAL_OBSTACLE_WIDTH_CM * 5U + LATERAL_IR_TO_CENTER_CM * 10U);
+                sl.start_rc = Lateral_Start(sl.side, 0, target);
+                lateral_status_t lateral; Lateral_Status(&lateral);
+                MotionLog_Write("SEARCHLATERAL,LATERAL_START,dir=%s,target_mm=%lu,start_rc=%d,angle_valid=%u,first_deg=%ld,second_deg=%ld,middle_mm=%lu",
+                    sl.side ? "RIGHT" : "LEFT",(unsigned long)target,sl.start_rc,
+                    (unsigned)(sl.start_rc == 0),sl.start_rc ? 0L : (long)lateral.angle_deg,
+                    sl.start_rc ? 0L : (long)lateral.angle_deg,sl.start_rc ? 0UL : (unsigned long)lateral.middle_mm);
             }
         } else { sl.state = state == STRAIGHT_ABORTED ? SEARCH_ABORTED : SEARCH_STRAIGHT_ERROR; return; }
         if (sl.start_rc) sl.state = SEARCH_START_ERROR;
@@ -145,6 +165,11 @@ void SearchLateral_Step(void)
         lateral_state_t state = Lateral_State();
         if (state == LATERAL_RUNNING) return;
         sl.state = state == LATERAL_DONE ? SEARCH_DONE : state == LATERAL_ABORTED ? SEARCH_ABORTED : SEARCH_LATERAL_ERROR;
+        lateral_status_t lateral; Lateral_Status(&lateral);
+        MotionLog_Write("SEARCHLATERAL,LATERAL_END,dir=%s,result=%s,lateral_state=%d,stage=%u,turn_state=%d,start_rc=%d,ir_min_mm=%lu,target_mm=%lu",
+            sl.side ? "RIGHT" : "LEFT",state == LATERAL_DONE ? "DONE" : state == LATERAL_ABORTED ? "ABORTED" : "ERROR",
+            (int)state,(unsigned)lateral.stage,(int)lateral.turn_state,lateral.start_rc,
+            (unsigned long)sl.ir_cm_x10,(unsigned long)lateral.distance_cm_x10);
         return;
     }
     if (fallback_child == FALLBACK_LATERAL) {

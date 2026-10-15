@@ -72,14 +72,14 @@
  * Applies to ALL distances above 20 cm: recheck 30/40/60 cm in both gears. */
 #define LONG_FORWARD_REV_ERROR_COMPENSATION 0.310f
 #define LONG_REVERSE_REV_ERROR_COMPENSATION 0.260f
-#define LONG_BASE_PWM                   3300U
-#define LONG_SLOW_PWM                   2400U
+#define LONG_BASE_PWM                   3000U
+#define LONG_SLOW_PWM                   2200U
 #define LONG_SLOWDOWN_START_REV         0.80f
 /* Remaining-distance smooth braking profile for actual fixed-distance moves. */
 #define GOCM_US_IR_DEFAULT_US_MM        600U /* Missing US GET: 60 cm input, not total distance. */
 #define GOCM_DECEL_DISTANCE_CM          30.0f
 #define GOCM_DECEL_MAX_FRACTION         0.90f
-#define GOCM_FINAL_PWM                  1780U
+#define GOCM_FINAL_PWM                  1700U /* Actual endpoint PWM, independent of straight scale. */
 #define GOCM_PWM_SLEW_PER_SECOND        2500U
 
 /* Left/right speed synchronization. Error is left-equivalent encoder counts
